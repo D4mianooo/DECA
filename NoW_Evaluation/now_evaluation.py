@@ -41,10 +41,27 @@ def iter_source_folders(root: Path):
     )
     return sorted(set(folders))
 
-def process_folder(src_folder: Path, deca: DECA, device: torch.device) -> None:
-    testdata = datasets.TestData(str(src_folder))
+def read_image_list(file_list_path: Path):
+    image_paths = []
+    with file_list_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            p = Path(line)
+            if not p.is_absolute():
+                p = SRC_ROOT / p
+            p = p.resolve()
+            if p.suffix.lower() in EXTENSIONS and p.is_file():
+                image_paths.append(p)
+            else:
+                print(f"[WARN] Skipping invalid image path: {line}")
+    return image_paths
 
-    for i in tqdm(range(len(testdata)), desc=f"Processing {src_folder}"):
+def process_images(image_paths, deca: DECA, device: torch.device) -> None:
+    testdata = datasets.TestData([str(p) for p in image_paths])
+
+    for i in tqdm(range(len(testdata)), desc="Processing listed images"):
         sample = testdata[i]
         images = sample["image"].to(device)[None, ...]
 
@@ -52,8 +69,8 @@ def process_folder(src_folder: Path, deca: DECA, device: torch.device) -> None:
             codedict = deca.encode(images)
             opdict, visdict = deca.decode(codedict)
 
-        src_image_path = Path(testdata.imagepath_list[i])
-        rel_path = src_image_path.relative_to(SRC_ROOT)
+        src_image_path = Path(testdata.imagepath_list[i]).resolve()
+        rel_path = src_image_path.relative_to(SRC_ROOT.resolve())
         dst_base = (DST_ROOT / rel_path).with_suffix("")
         dst_base.parent.mkdir(parents=True, exist_ok=True)
 
@@ -62,40 +79,48 @@ def process_folder(src_folder: Path, deca: DECA, device: torch.device) -> None:
         deca.save_obj(str(dst_base) + ".obj", opdict)
 
         print(f"[OK] {src_image_path} -> {dst_base}.txt/.obj")
-def is_folder_already_processed(src_folder: Path) -> bool:
-    image_files = [
-        p for p in src_folder.iterdir()
-        if p.is_file() and p.suffix.lower() in EXTENSIONS
-    ]
-    if not image_files:
-        return False
 
-    for src_image_path in image_files:
-        rel_path = src_image_path.relative_to(SRC_ROOT)
-        dst_base = (DST_ROOT / rel_path).with_suffix("")
-        if not (
-                Path(str(dst_base) + ".txt").exists()
-                and Path(str(dst_base) + ".obj").exists()
-                and Path(str(dst_base) + "_vis.jpg").exists()
-        ):
-            return False
-    return True
+def is_image_already_processed(src_image_path: Path) -> bool:
+    rel_path = src_image_path.resolve().relative_to(SRC_ROOT.resolve())
+    dst_base = (DST_ROOT / rel_path).with_suffix("")
+    return (
+            Path(str(dst_base) + ".txt").exists()
+            and Path(str(dst_base) + ".obj").exists()
+            and Path(str(dst_base) + "_vis.jpg").exists()
+    )
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--file-list",
+        type=str,
+        required=True,
+        help="Path to a text file containing image paths (one per line). "
+             "Relative paths are resolved from SRC_ROOT.",
+    )
+    args = parser.parse_args()
+
     deca_cfg.rasterizer_type = "pytorch3d"
     device = torch.device("cuda")
     deca = DECA(config=deca_cfg, device=device)
 
-    source_folders = iter_source_folders(SRC_ROOT)
-    if not source_folders:
-        print(f"No supported image folders found under: {SRC_ROOT}")
+    image_paths = read_image_list(Path(args.file_list))
+    if not image_paths:
+        print(f"No valid images found in list: {args.file_list}")
         return
 
-    for src_folder in source_folders:
-        if is_folder_already_processed(src_folder):
-            print(f"[SKIP] Folder already processed: {src_folder}")
+    pending = []
+    for p in image_paths:
+        if is_image_already_processed(p):
+            print(f"[SKIP] Already processed: {p}")
             continue
-        process_folder(src_folder, deca, device)
+        pending.append(p)
+
+    if not pending:
+        print("All listed images are already processed.")
+        return
+
+    process_images(pending, deca, device)
 
 if __name__ == "__main__":
     main()
