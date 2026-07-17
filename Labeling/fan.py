@@ -1,5 +1,7 @@
 import argparse
+import hashlib
 from pathlib import Path
+from typing import Iterator
 
 import cv2
 import numpy as np
@@ -26,19 +28,36 @@ def iter_images(input_path: Path):
         if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
             yield path
 
+def relative_stem(img_path: Path, input_root: Path) -> Path:
+    return img_path.relative_to(input_root).with_suffix("")
 
-def list_images(input_path: Path):
-    if input_path.is_file():
-        return [input_path]
+def belongs_to_worker(img_path: Path, input_root: Path, num_workers: int, worker_id: int) -> bool:
+    relative_path = img_path.relative_to(input_root).as_posix()
 
-    return sorted(
-        p
-        for p in input_path.rglob("*")
-        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
-    )
+    digest = hashlib.blake2b(
+        relative_path.encode("utf-8"),
+        digest_size=8
+    ).digest()
+
+    file_id = int.from_bytes(digest, byteorder="big")
+
+    return file_id % num_workers == worker_id
+
+def iter_unprocessed_worker_images(input_path: Path, input_root: Path, output_dir: Path, num_workers: int, worker_id: int, overwrite: bool):
+    for img_path in iter_images(input_path):
+        rel_stem = relative_stem(img_path, input_root)
+        npy_path = output_dir / rel_stem.with_suffix(".npy")
+
+        if npy_path.exists() and not overwrite:
+            continue
+
+        yield img_path
 
 
-def draw_landmarks(image_bgr: np.ndarray, kpt: np.ndarray):
+def draw_landmarks(
+        image_bgr: np.ndarray,
+        kpt: np.ndarray
+) -> np.ndarray:
     vis = image_bgr.copy()
 
     for x, y in kpt:
@@ -51,38 +70,6 @@ def draw_landmarks(image_bgr: np.ndarray, kpt: np.ndarray):
         )
 
     return vis
-
-
-def relative_stem(img_path: Path, input_root: Path):
-    rel = img_path.relative_to(input_root)
-    return rel.with_suffix("")
-
-def filter_unprocessed_images(images, input_root: Path, output_dir: Path):
-    unprocessed_images = []
-    skipped_existing = 0
-
-    for img_path in images:
-        rel_stem = relative_stem(img_path, input_root)
-        npy_path = output_dir / rel_stem.with_suffix(".npy")
-
-        if npy_path.exists():
-            skipped_existing += 1
-        else:
-            unprocessed_images.append(img_path)
-
-    return unprocessed_images, skipped_existing
-
-
-def split_images_between_workers(images, num_workers: int, worker_id: int):
-    if num_workers < 1:
-        raise ValueError("--num_workers must be at least 1")
-
-    if worker_id < 0 or worker_id >= num_workers:
-        raise ValueError(
-            f"--worker_id must be between 0 and {num_workers - 1}"
-        )
-
-    return images[worker_id::num_workers]
 
 
 def main():
@@ -120,34 +107,38 @@ def main():
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Recompute even if output .npy already exists"
+        help="Recompute existing outputs"
     )
 
     parser.add_argument(
         "--num_workers",
         type=int,
         default=1,
-        help="Total number of parallel worker processes"
+        help="Total number of worker processes"
     )
 
     parser.add_argument(
         "--worker_id",
         type=int,
         default=0,
-        help="ID of this worker, from 0 to num_workers - 1"
+        help="Worker ID from 0 to num_workers - 1"
     )
 
     args = parser.parse_args()
 
+    if args.num_workers < 1:
+        raise ValueError("--num_workers must be at least 1")
+
+    if not 0 <= args.worker_id < args.num_workers:
+        raise ValueError(
+            f"--worker_id must be between 0 and "
+            f"{args.num_workers - 1}"
+        )
+
     input_path = Path(args.input).resolve()
     output_dir = Path(args.output).resolve()
+
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    images = list_images(input_path)
-
-    if not images:
-        print(f"[Worker {args.worker_id}] No images found in: {input_path}")
-        return
 
     input_root = (
         input_path
@@ -155,64 +146,22 @@ def main():
         else input_path.parent
     )
 
-    total_found = len(images)
-    skipped_existing = 0
-
-    if not args.overwrite:
-        images, skipped_existing = filter_unprocessed_images(
-            images=images,
-            input_root=input_root,
-            output_dir=output_dir
-        )
-
-    if not images:
-        print(
-            f"[Worker {args.worker_id}] "
-            "All images have already been processed."
-        )
-        print(
-            f"[Worker {args.worker_id}] "
-            f"Skipped existing: {skipped_existing}"
-        )
-        return
-
-    total_unprocessed = len(images)
-
-    images = split_images_between_workers(
-        images=images,
+    images = iter_unprocessed_worker_images(
+        input_path=input_path,
+        input_root=input_root,
+        output_dir=output_dir,
         num_workers=args.num_workers,
-        worker_id=args.worker_id
+        worker_id=args.worker_id,
+        overwrite=args.overwrite
     )
-
-    worker_total = len(images)
-
-    print(
-        f"[Worker {args.worker_id}/{args.num_workers}] "
-        f"Images found: {total_found}"
-    )
-    print(
-        f"[Worker {args.worker_id}/{args.num_workers}] "
-        f"Unprocessed images: {total_unprocessed}"
-    )
-    print(
-        f"[Worker {args.worker_id}/{args.num_workers}] "
-        f"Assigned images: {worker_total}"
-    )
-
-    if not images:
-        print(
-            f"[Worker {args.worker_id}] "
-            "No images were assigned to this worker."
-        )
-        return
 
     fa = face_alignment.FaceAlignment(
         face_alignment.LandmarksType.TWO_D,
         flip_input=False,
-        device=args.device,
-        compile=False
+        device=args.device
     )
 
+    processed = 0
     detected = 0
     failed_read = 0
     no_face = 0
@@ -270,26 +219,10 @@ def main():
             cv2.imwrite(str(vis_path), vis)
 
     print(f"\n[Worker {args.worker_id}] Done.")
-    print(
-        f"[Worker {args.worker_id}] "
-        f"Assigned images: {worker_total}"
-    )
-    print(
-        f"[Worker {args.worker_id}] "
-        f"Detected faces: {detected}/{worker_total}"
-    )
-    print(
-        f"[Worker {args.worker_id}] "
-        f"Globally skipped existing: {skipped_existing}"
-    )
-    print(
-        f"[Worker {args.worker_id}] "
-        f"No-face images: {no_face}"
-    )
-    print(
-        f"[Worker {args.worker_id}] "
-        f"Read failures: {failed_read}"
-    )
+    print(f"[Worker {args.worker_id}] Processed: {processed}")
+    print(f"[Worker {args.worker_id}] Detected faces: {detected}")
+    print(f"[Worker {args.worker_id}] No-face images: {no_face}")
+    print(f"[Worker {args.worker_id}] Read failures: {failed_read}")
 
 
 if __name__ == "__main__":
