@@ -16,14 +16,14 @@ class VGGFace2Dataset(Dataset):
         '''
         self.K = K
         self.image_size = image_size
-        self.imagefolder = '/ps/scratch/face2d3d/train'
-        self.kptfolder = '/ps/scratch/face2d3d/train_annotated_torch7'
-        self.segfolder = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_seg/test_crop_size_400_batch'
+        self.imagefolder = './datasets/VGGFACE2/train'
+        self.kptfolder = './datasets/VGGFACE2/train_annotated_fan'
+        self.segfolder = './datasets/VGGFACE2/train_seg'
         # hq:
         # datafile = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_cleaning_codes/ringnetpp_training_lists/second_cleaning/vggface2_bbx_size_bigger_than_400_train_list_max_normal_100_ring_5_1_serial.npy'
-        datafile = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_cleaning_codes/ringnetpp_training_lists/second_cleaning/vggface2_train_list_max_normal_100_ring_5_1_serial.npy'
+        datafile = './datasets/VGGFACE2/my_vggface2_train_list.npy'
         if isEval:
-            datafile = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_cleaning_codes/ringnetpp_training_lists/second_cleaning/vggface2_val_list_max_normal_100_ring_5_1_serial.npy'
+            datafile = './datasets/VGGFACE2/my_vggface2_train_list.npy'
         self.data_lines = np.load(datafile).astype('str')
 
         self.isTemporal = isTemporal
@@ -35,6 +35,16 @@ class VGGFace2Dataset(Dataset):
 
     def __len__(self):
         return len(self.data_lines)
+
+    @staticmethod
+    def _normalize_singleton_channel(x):
+        if isinstance(x, np.ndarray):
+            if x.ndim in (3, 4) and x.shape[-1] == 1:
+                x = np.squeeze(x, axis=-1)
+        elif torch.is_tensor(x):
+            if x.dim() in (3, 4) and x.shape[-1] == 1:
+                x = x.squeeze(-1)
+        return x
 
     def __getitem__(self, idx):
         images_list = []; kpt_list = []; mask_list = []
@@ -80,7 +90,12 @@ class VGGFace2Dataset(Dataset):
             'mask': mask_array
         }
         
-        return data_dict
+        sample = data_dict
+        # Normalize every tensor-like field before returning
+        for k, v in sample.items():
+            sample[k] = self._normalize_singleton_channel(v)
+
+        return sample
     
     def crop(self, image, kpt):
         left = np.min(kpt[:,0]); right = np.max(kpt[:,0]); 

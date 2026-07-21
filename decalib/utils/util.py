@@ -269,11 +269,11 @@ def vertex_normals(vertices, faces):
     vertices_faces = vertices_faces.reshape(-1, 3, 3)
 
     normals.index_add_(0, faces[:, 1].long(), 
-                       torch.cross(vertices_faces[:, 2] - vertices_faces[:, 1], vertices_faces[:, 0] - vertices_faces[:, 1]))
+                       torch.linalg.cross(vertices_faces[:, 2] - vertices_faces[:, 1], vertices_faces[:, 0] - vertices_faces[:, 1]))
     normals.index_add_(0, faces[:, 2].long(), 
-                       torch.cross(vertices_faces[:, 0] - vertices_faces[:, 2], vertices_faces[:, 1] - vertices_faces[:, 2]))
+                       torch.linalg.cross(vertices_faces[:, 0] - vertices_faces[:, 2], vertices_faces[:, 1] - vertices_faces[:, 2]))
     normals.index_add_(0, faces[:, 0].long(),
-                       torch.cross(vertices_faces[:, 1] - vertices_faces[:, 0], vertices_faces[:, 2] - vertices_faces[:, 0]))
+                       torch.linalg.cross(vertices_faces[:, 1] - vertices_faces[:, 0], vertices_faces[:, 2] - vertices_faces[:, 0]))
 
     normals = F.normalize(normals, eps=1e-6, dim=1)
     normals = normals.reshape((bs, nv, 3))
@@ -591,6 +591,7 @@ def plot_kpts(image, kpts, color = 'r'):
     image = image.copy()
     kpts = kpts.copy()
     radius = max(int(min(image.shape[0], image.shape[1])/200), 1)
+    #    selected_idx = [48, 54, 33, 42, 45, 36, 39]
     for i in range(kpts.shape[0]):
         st = kpts[i, :2]
         if kpts.shape[1]==4:
@@ -603,7 +604,6 @@ def plot_kpts(image, kpts, color = 'r'):
         ed = kpts[i + 1, :2]
         image = cv2.line(image, (int(st[0]), int(st[1])), (int(ed[0]), int(ed[1])), (255, 255, 255), radius)
         image = cv2.circle(image,(int(st[0]), int(st[1])), radius, c, radius*2)  
-
     return image
 
 def plot_verts(image, kpts, color = 'r'):

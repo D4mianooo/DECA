@@ -11,13 +11,13 @@ from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 class NoWDataset(Dataset):
     def __init__(self, ring_elements=6, crop_size=224, scale=1.6):
-        folder = '/ps/scratch/yfeng/other-github/now_evaluation/data/NoW_Dataset'
+        folder = '/mnt/c/Users/damia/PycharmProjects/DECA/datasets/NoW/'
         self.data_path = os.path.join(folder, 'imagepathsvalidation.txt')
         with open(self.data_path) as f:
             self.data_lines = f.readlines()
 
-        self.imagefolder = os.path.join(folder, 'final_release_version', 'iphone_pictures')
-        self.bbxfolder = os.path.join(folder, 'final_release_version', 'detected_face')
+        self.imagefolder = os.path.join(folder, 'NoW_Dataset/final_release_version', 'iphone_pictures')
+        self.bbxfolder = os.path.join(folder, 'NoW_Dataset/final_release_version', 'detected_face')
 
         # self.data_path = '/ps/scratch/face2d3d/ringnetpp/eccv/test_data/evaluation/NoW_Dataset/final_release_version/test_image_paths_ring_6_elements.npy'
         # self.imagepath = '/ps/scratch/face2d3d/ringnetpp/eccv/test_data/evaluation/NoW_Dataset/final_release_version/iphone_pictures/'

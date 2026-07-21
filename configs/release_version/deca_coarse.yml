@@ -6,9 +6,11 @@
 # Time:
 # around 15min/1000iterations
 # in total, needs around 
-output_dir: "/ps/scratch/yfeng/Data/Projects-data/DECA-training/training/DECA_release_version/coarse"
-pretrained_modelpath: "/ps/scratch/yfeng/Data/Projects-data/DECA-training/training/DECA_release_version/pretrain/model.tar"
+output_dir: "TUL/coarse"
+pretrained_modelpath: "TUL/pretrain/model.tar"
 dataset:
+  training_data: [ 'vggface2' ]
+  eval_data: [ 'vggface2' ]
   batch_size: 8
   K: 2
 train:

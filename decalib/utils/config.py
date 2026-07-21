@@ -43,6 +43,7 @@ cfg.model.use_tex = True
 cfg.model.jaw_type = 'aa' # default use axis angle, another option: euler. Note that: aa is not stable in the beginning
 # face recognition model
 cfg.model.fr_model_path = os.path.join(cfg.deca_dir, 'data', 'resnet50_ft_weight.pkl')
+cfg.model.extract_tex = False
 
 ## details
 cfg.model.n_detail = 128
@@ -52,7 +53,7 @@ cfg.model.max_z = 0.01
 # Options for Dataset
 # ---------------------------------------------------------------------------- #
 cfg.dataset = CN()
-cfg.dataset.training_data = ['vggface2', 'ethnicity']
+cfg.dataset.training_data = ['vggface2']
 # cfg.dataset.training_data = ['ethnicity']
 cfg.dataset.eval_data = ['aflw2000']
 cfg.dataset.test_data = ['']

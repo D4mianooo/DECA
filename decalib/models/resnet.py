@@ -191,7 +191,7 @@ def load_ResNet152Model():
 ######## Unet
 
 class DoubleConv(nn.Module):
-    """(convolution => [BN] => ReLU) * 2"""
+    """(convolution => []BN => ReLU) * 2"""
 
     def __init__(self, in_channels, out_channels):
         super().__init__()

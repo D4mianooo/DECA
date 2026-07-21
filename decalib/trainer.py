@@ -59,13 +59,15 @@ class Trainer(object):
         self.configure_optimizers()
         self.load_checkpoint()
 
-        # initialize loss  
-        # # initialize loss   
-        if self.train_detail:     
+        # initialize loss
+        # # initialize loss
+        if self.train_detail:
+            print("[INFO] <TRAINER> Train detail")
             self.mrf_loss = lossfunc.IDMRFLoss()
             self.face_attr_mask = util.load_local_mask(image_size=self.cfg.model.uv_size, mode='bbx')
         else:
-            self.id_loss = lossfunc.VGGFace2Loss(pretrained_model=self.cfg.model.fr_model_path)      
+            print("[INFO] <TRAINER> Identity loss")
+            self.id_loss = lossfunc.VGGFace2Loss(pretrained_model=self.cfg.model.fr_model_path)
         
         logger.add(os.path.join(self.cfg.output_dir, self.cfg.train.log_dir, 'train.log'))
         if self.cfg.train.write_summary:
@@ -399,23 +401,28 @@ class Trainer(object):
                     logger.info(loss_info)
 
                 if self.global_step % self.cfg.train.vis_steps == 0:
-                    visind = list(range(8))
-                    shape_images = self.deca.render.render_shape(opdict['verts'][visind], opdict['trans_verts'][visind])
-                    visdict = {
-                        'inputs': opdict['images'][visind], 
-                        'landmarks2d_gt': util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind], isScale=True),
-                        'landmarks2d': util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind], isScale=True),
-                        'shape_images': shape_images,
-                    }
-                    if 'predicted_images' in opdict.keys():
-                        visdict['predicted_images'] = opdict['predicted_images'][visind]
-                    if 'predicted_detail_images' in opdict.keys():
-                        visdict['predicted_detail_images'] = opdict['predicted_detail_images'][visind]
+                    current_bs = opdict['verts'].shape[0]
+                    n_vis = min(8, current_bs)
+                    if n_vis > 0:
+                        visind = list(range(n_vis))
+                        shape_images = self.deca.render.render_shape(
+                            opdict['verts'][visind],
+                            opdict['trans_verts'][visind]
+                        )
+                        visdict = {
+                            'inputs': opdict['images'][visind], 
+                            'landmarks2d_gt': util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind], isScale=True),
+                            'landmarks2d': util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind], isScale=True),
+                            'shape_images': shape_images,
+                        }
+                        if 'predicted_images' in opdict.keys():
+                            visdict['predicted_images'] = opdict['predicted_images'][visind]
+                        if 'predicted_detail_images' in opdict.keys():
+                            visdict['predicted_detail_images'] = opdict['predicted_detail_images'][visind]
 
-                    savepath = os.path.join(self.cfg.output_dir, self.cfg.train.vis_dir, f'{self.global_step:06}.jpg')
-                    grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
-                    # import ipdb; ipdb.set_trace()                    
-                    self.writer.add_image('train_images', (grid_image/255.).astype(np.float32).transpose(2,0,1), self.global_step)
+                        savepath = os.path.join(self.cfg.output_dir, self.cfg.train.vis_dir, f'{self.global_step:06}.jpg')
+                        grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
+                        self.writer.add_image('train_images', (grid_image/255.).astype(np.float32).transpose(2,0,1), self.global_step)
 
                 if self.global_step>0 and self.global_step % self.cfg.train.checkpoint_steps == 0:
                     model_dict = self.deca.model_dict()

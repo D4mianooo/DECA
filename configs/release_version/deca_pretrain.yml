@@ -10,10 +10,12 @@
 # 
 # 
 # '''
-output_dir: "/ps/scratch/yfeng/Data/Projects-data/DECA-training/training/DECA_release_version/pretrain"
-pretrained_modelpath: ''
+output_dir: "TUL/pretrain"
+pretrained_modelpath: ""
 dataset:
-  batch_size: 64
+  training_data: ['vggface2']
+  eval_data: ['vggface2']
+  batch_size: 16
   K: 1
 loss:
   photo: 0.

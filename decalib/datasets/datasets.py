@@ -46,6 +46,8 @@ def video2sequence(video_path, sample_step=10):
     return imagepath_list
 
 class TestData(Dataset):
+    _shared_fan_detector = None
+
     def __init__(self, testpath, iscrop=True, crop_size=224, scale=1.25, face_detector='fan', sample_step=10):
         '''
             testpath: folder, imagepath_list, image path, video path
@@ -68,7 +70,9 @@ class TestData(Dataset):
         self.iscrop = iscrop
         self.resolution_inp = crop_size
         if face_detector == 'fan':
-            self.face_detector = detectors.FAN()
+            if TestData._shared_fan_detector is None:
+                TestData._shared_fan_detector = detectors.FAN()
+            self.face_detector = TestData._shared_fan_detector
         # elif face_detector == 'mtcnn':
         #     self.face_detector = detectors.MTCNN()
         else:

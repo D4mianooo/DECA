@@ -23,8 +23,6 @@ from pathlib import Path
 import shutil
 
 SRC_ROOT = Path("datasets/NoW/NoW_Dataset/final_release_version/iphone_pictures")
-DST_ROOT = Path("NoW_Evaluation/evaluation_preds")
-
 EXTENSIONS = {".jpg", ".png", ".jpeg"}
 
 def folder_has_supported_files(folder: Path) -> bool:
@@ -58,8 +56,9 @@ def read_image_list(file_list_path: Path):
                 print(f"[WARN] Skipping invalid image path: {line}")
     return image_paths
 
-def process_images(image_paths, deca: DECA, device: torch.device) -> None:
-    testdata = datasets.TestData([str(p) for p in image_paths])
+
+def process_images(image_paths, deca: DECA, device: torch.device, dst_root: Path) -> None:
+    testdata = datasets.TestData([str(p) for p in image_paths], scale=1.6)
 
     for i in tqdm(range(len(testdata)), desc="Processing listed images"):
         sample = testdata[i]
@@ -71,18 +70,19 @@ def process_images(image_paths, deca: DECA, device: torch.device) -> None:
 
         src_image_path = Path(testdata.imagepath_list[i]).resolve()
         rel_path = src_image_path.relative_to(SRC_ROOT.resolve())
-        dst_base = (DST_ROOT / rel_path).with_suffix("")
+        dst_base = (dst_root / rel_path).with_suffix("")
         dst_base.parent.mkdir(parents=True, exist_ok=True)
 
         cv2.imwrite(str(dst_base) + '_vis.jpg', deca.visualize(visdict))
-        np.savetxt(str(dst_base) + ".txt", opdict["landmarks3d"][0].cpu().numpy())
+        np.savetxt(str(dst_base) + ".txt", opdict["landmarks3d_world"][0].cpu().numpy())
         deca.save_obj(str(dst_base) + ".obj", opdict)
 
         print(f"[OK] {src_image_path} -> {dst_base}.txt/.obj")
 
-def is_image_already_processed(src_image_path: Path) -> bool:
+
+def is_image_already_processed(src_image_path: Path, dst_root: Path) -> bool:
     rel_path = src_image_path.resolve().relative_to(SRC_ROOT.resolve())
-    dst_base = (DST_ROOT / rel_path).with_suffix("")
+    dst_base = (dst_root / rel_path).with_suffix("")
     return (
             Path(str(dst_base) + ".txt").exists()
             and Path(str(dst_base) + ".obj").exists()
@@ -98,7 +98,16 @@ def main() -> None:
         help="Path to a text file containing image paths (one per line). "
              "Relative paths are resolved from SRC_ROOT.",
     )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="NoW_Evaluation/evaluation_preds2",
+        help="Directory where output files will be saved.",
+    )
+
     args = parser.parse_args()
+
+    dst_root = Path(args.output_dir)
 
     deca_cfg.rasterizer_type = "pytorch3d"
     device = torch.device("cuda")
@@ -111,7 +120,7 @@ def main() -> None:
 
     pending = []
     for p in image_paths:
-        if is_image_already_processed(p):
+        if is_image_already_processed(p, dst_root):
             print(f"[SKIP] Already processed: {p}")
             continue
         pending.append(p)
@@ -120,7 +129,8 @@ def main() -> None:
         print("All listed images are already processed.")
         return
 
-    process_images(pending, deca, device)
+    process_images(pending, deca, device, dst_root)
+
 
 if __name__ == "__main__":
     main()

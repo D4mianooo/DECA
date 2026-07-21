@@ -466,7 +466,7 @@ class TestData(Dataset):
                 print('no face detected! run original image')
                 left = 0; right = h-1; top=0; bottom=w-1
             else:
-                # d = detected_faces[0].rect ## only use the first detected face (assume that each input image only contains one face)
+                # d = detected_faces[0].rect ## only use the first detected face (assume that each input image only contains batch1 face)
                 # left = d.left(); right = d.right(); top = d.top(); bottom = d.bottom()
                 kpt = detected_faces[0]
                 left = np.min(kpt[:,0]); right = np.max(kpt[:,0]); 

@@ -16,12 +16,13 @@ class EthnicityDataset(Dataset):
         '''
         self.K = K
         self.image_size = image_size
-        self.imagefolder = '/ps/scratch/face2d3d/train'
-        self.kptfolder = '/ps/scratch/face2d3d/train_annotated_torch7/'
-        self.segfolder = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_seg/test_crop_size_400_batch/'
+        self.imagefolder = './datasets/BUPT/race_per_7000/'
+        self.kptfolder = './datasets/BUPT/race_per_7000_annotated/'
+        self.segfolder = './datasets/BUPT/race_per_7000_seg/'
+
         # hq:
         # datafile = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_cleaning_codes/ringnetpp_training_lists/second_cleaning/vggface2_bbx_size_bigger_than_400_train_list_max_normal_100_ring_5_1_serial.npy'
-        datafile = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_cleaning_codes/ringnetpp_training_lists/second_cleaning/vggface2_and_race_per_7000_african_asian_2d_train_list_max_normal_100_ring_5_1_serial.npy'
+        datafile = './datasets/BUPT/race_per_7000_train_list.npy'
         self.data_lines = np.load(datafile).astype('str')
 
         self.isTemporal = isTemporal
@@ -38,16 +39,8 @@ class EthnicityDataset(Dataset):
         images_list = []; kpt_list = []; mask_list = []
         for i in range(self.K):
             name = self.data_lines[idx, i]
-            if name[0]=='n':
-                self.imagefolder = '/ps/scratch/face2d3d/train/'
-                self.kptfolder = '/ps/scratch/face2d3d/train_annotated_torch7/'
-                self.segfolder = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_seg/test_crop_size_400_batch/'
-            elif name[0]=='A':
-                self.imagefolder = '/ps/scratch/face2d3d/race_per_7000/'
-                self.kptfolder = '/ps/scratch/face2d3d/race_per_7000_annotated_torch7_new/'
-                self.segfolder = '/ps/scratch/face2d3d/texture_in_the_wild_code/race7000_seg/test_crop_size_400_batch/'
 
-            image_path = os.path.join(self.imagefolder, name + '.jpg')  
+            image_path = os.path.join(self.imagefolder, name + '.jpg')
             seg_path = os.path.join(self.segfolder, name + '.npy')  
             kpt_path = os.path.join(self.kptfolder, name + '.npy')
                                             

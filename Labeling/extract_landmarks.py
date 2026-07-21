@@ -182,8 +182,14 @@ def main():
             )
             continue
 
+        print(img_path)
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        preds = fa.get_landmarks(rgb)
+
+        try:
+            preds = fa.get_landmarks_from_image(rgb)
+        except RuntimeError as e:
+            print(f"[WARN] Skipping: {e}")
+            continue
 
         if preds is None or len(preds) == 0:
             no_face += 1

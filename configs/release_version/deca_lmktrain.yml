@@ -1,0 +1,37 @@
+output_dir: "TUL/lmktrain2"
+pretrained_modelpath: ""
+
+dataset:
+  batch_size: 8            # increase if GPU allows
+  K: 2                     # same-identity multi-view helps geometry consistency
+
+loss:
+  # geometry-focused
+  lmk: 1.0
+  useWlmk: true
+  eyed: 0.5
+  lipd: 0.5
+
+  # disable appearance supervision
+  photo: 0.0
+  id: 0.0
+  useSeg: false
+
+  # keep latent regularization to avoid drift
+  reg_shape: 1.0e-4
+  reg_exp: 1.0e-4
+  reg_tex: 0.0
+  reg_light: 0.0
+
+  # optional consistency
+  shape_consistency: true
+  detail_consistency: false
+train:
+  resume: true
+  max_epochs: 8
+  max_steps: 120000
+  log_steps: 20
+  vis_steps: 500
+  checkpoint_steps: 1000
+  val_steps: 1000
+  eval_steps: 5000
