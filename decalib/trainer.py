@@ -54,6 +54,10 @@ class Trainer(object):
         # training stage: coarse and detail
         self.train_detail = self.cfg.train.train_detail
 
+        if self.cfg.train.write_summary:
+            from torch.utils.tensorboard import SummaryWriter
+            self.writer = SummaryWriter(log_dir=os.path.join(self.cfg.output_dir, self.cfg.train.log_dir))
+
         # deca model
         self.deca = model.to(self.device)
         self.configure_optimizers()
@@ -73,7 +77,7 @@ class Trainer(object):
         if self.cfg.train.write_summary:
             from torch.utils.tensorboard import SummaryWriter
             self.writer = SummaryWriter(log_dir=os.path.join(self.cfg.output_dir, self.cfg.train.log_dir))
-    
+
     def configure_optimizers(self):
         if self.train_detail:
             self.opt = torch.optim.Adam(
@@ -109,8 +113,11 @@ class Trainer(object):
             logger.info('model path not found, start training from scratch')
             self.global_step = 0
 
-    def training_step(self, batch, batch_nb, training_type='coarse'):
-        self.deca.train()
+    def training_step(self, batch, batch_nb, training_type='coarse', is_validation=False):
+        if is_validation:
+            self.deca.eval()
+        else:
+            self.deca.train()
         if self.train_detail:
             self.deca.E_flame.eval()
         # [B, K, 3, size, size] ==> [BxK, 3, size, size]
@@ -145,7 +152,7 @@ class Trainer(object):
                 code = codedict[key]
                 codedict[key] = torch.cat([code, code], dim=0)
             ## append gt
-            images = torch.cat([images, images], dim=0)# images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1]) 
+            images = torch.cat([images, images], dim=0)# images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1])
             lmk = torch.cat([lmk, lmk], dim=0) #lmk = lmk.view(-1, lmk.shape[-2], lmk.shape[-1])
             masks = torch.cat([masks, masks], dim=0)
 
@@ -162,7 +169,7 @@ class Trainer(object):
             if self.cfg.loss.photo > 0.:
                 #------ rendering
                 # mask
-                mask_face_eye = F.grid_sample(self.deca.uv_face_eye_mask.expand(batch_size,-1,-1,-1), opdict['grid'].detach(), align_corners=False) 
+                mask_face_eye = F.grid_sample(self.deca.uv_face_eye_mask.expand(batch_size,-1,-1,-1), opdict['grid'].detach(), align_corners=False)
                 # images
                 predicted_images = opdict['rendered_images']*mask_face_eye*opdict['alpha_images']
                 opdict['predicted_images'] = predicted_images
@@ -224,11 +231,11 @@ class Trainer(object):
             # camera to image space
             trans_verts[:,:,1:] = -trans_verts[:,:,1:]
             predicted_landmarks[:,:,1:] = - predicted_landmarks[:,:,1:]
-            
+
             albedo = self.deca.flametex(texcode)
 
             #------ rendering
-            ops = self.deca.render(verts, trans_verts, albedo, lightcode) 
+            ops = self.deca.render(verts, trans_verts, albedo, lightcode)
             # mask
             mask_face_eye = F.grid_sample(self.deca.uv_face_eye_mask.expand(batch_size,-1,-1,-1), ops['grid'].detach(), align_corners=False)
             # images
@@ -253,11 +260,11 @@ class Trainer(object):
             uv_mask = (uv_pnorm[:,[-1],:,:] < -0.05).float().detach()
             ## combine masks
             uv_vis_mask = uv_mask_gt*uv_mask*self.deca.uv_face_eye_mask
-            
+
             #### ----------------------- Losses
             losses = {}
             ############################### details
-            # if self.cfg.loss.old_mrf: 
+            # if self.cfg.loss.old_mrf:
             #     if self.cfg.loss.old_mrf_face_mask:
             #         masks = masks*mask_face_eye*ops['alpha_images']
             #     losses['photo_detail'] = (masks*(predicted_detailed_image - images).abs()).mean()*100
@@ -268,7 +275,7 @@ class Trainer(object):
             uv_texture_patch = F.interpolate(uv_texture[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
             uv_texture_gt_patch = F.interpolate(uv_texture_gt[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
             uv_vis_mask_patch = F.interpolate(uv_vis_mask[:, :, self.face_attr_mask[pi][2]:self.face_attr_mask[pi][3], self.face_attr_mask[pi][0]:self.face_attr_mask[pi][1]], [new_size, new_size], mode='bilinear')
-            
+
             losses['photo_detail'] = (uv_texture_patch*uv_vis_mask_patch - uv_texture_gt_patch*uv_vis_mask_patch).abs().mean()*self.cfg.loss.photo_D
             losses['photo_detail_mrf'] = self.mrf_loss(uv_texture_patch*uv_vis_mask_patch, uv_texture_gt_patch*uv_vis_mask_patch)*self.cfg.loss.photo_D*self.cfg.loss.mrf
 
@@ -286,7 +293,7 @@ class Trainer(object):
                 'images': images,
                 'lmk': lmk
             }
-            
+
         #########################################################
         all_loss = 0.
         losses_key = losses.keys()
@@ -294,7 +301,7 @@ class Trainer(object):
             all_loss = all_loss + losses[key]
         losses['all_loss'] = all_loss
         return losses, opdict
-        
+
     def validation_step(self):
         self.deca.eval()
         try:
@@ -302,13 +309,25 @@ class Trainer(object):
         except:
             self.val_iter = iter(self.val_dataloader)
             batch = next(self.val_iter)
-        images = batch['image'].to(self.device); images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1]) 
         with torch.no_grad():
+            val_losses, _ = self.training_step(batch, batch_nb=0, is_validation=True)
+            images = batch['image'].to(self.device); images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1])
+            images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1])
             codedict = self.deca.encode(images)
             opdict, visdict = self.deca.decode(codedict)
+
         savepath = os.path.join(self.cfg.output_dir, self.cfg.train.val_vis_dir, f'{self.global_step:08}.jpg')
         grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
-        self.writer.add_image('val_images', (grid_image/255.).astype(np.float32).transpose(2,0,1), self.global_step)
+        if self.cfg.train.write_summary:
+            self.writer.add_image('val_images', (grid_image / 255.).astype(np.float32).transpose(2, 0, 1), self.global_step)
+            for k, v in val_losses.items():
+                self.writer.add_scalar('val_loss/' + k, v, global_step=self.global_step)
+
+        val_loss_info = f"[VAL] ExpName: {self.cfg.exp_name}, Step: {self.global_step}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} | "
+        for k, v in val_losses.items():
+            val_loss_info += f"{k}: {v:.4f}, "
+        logger.info(val_loss_info)
+
         self.deca.train()
 
     def evaluate(self):
@@ -438,11 +457,13 @@ class Trainer(object):
                 if self.global_step % self.cfg.train.val_steps == 0:
                     self.validation_step()
                 
-                if self.global_step % self.cfg.train.eval_steps == 0:
-                    self.evaluate()
+                # if self.global_step % self.cfg.train.eval_steps == 0:
+                #     self.evaluate()
 
                 all_loss = losses['all_loss']
-                self.opt.zero_grad(); all_loss.backward(); self.opt.step()
+                if step % self.cfg.dataset.gradient_accumulation_steps == 0:
+                    self.opt.zero_grad(); all_loss.backward(); self.opt.step()
+
                 self.global_step += 1
                 if self.global_step > self.cfg.train.max_steps:
                     break
