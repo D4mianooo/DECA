@@ -47,11 +47,14 @@ def iter_unprocessed_worker_images(input_path: Path, input_root: Path, output_di
     for img_path in iter_images(input_path):
         rel_stem = relative_stem(img_path, input_root)
         npy_path = output_dir / rel_stem.with_suffix(".npy")
-
+        if not belongs_to_worker(img_path, input_root, num_workers, worker_id):
+            continue
         if npy_path.exists() and not overwrite:
             continue
 
+        print(img_path)
         yield img_path
+
 
 
 def draw_landmarks(
@@ -182,7 +185,6 @@ def main():
             )
             continue
 
-        print(img_path)
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
         try:
