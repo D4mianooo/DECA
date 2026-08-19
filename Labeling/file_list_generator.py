@@ -29,13 +29,22 @@ def main():
 
     args = parser.parse_args()
 
+
+
     all_ids = []
     for root, _, files in os.walk(args.input_path):
         for f in files:
-            if f.endswith(".npy"):
-                rel = os.path.relpath(os.path.join(root, f), args.input_path)
-                sample_id = os.path.splitext(rel)[0].replace("\\", "/")
-                all_ids.append(sample_id)
+            if "BUPT" in root:
+                if "African" in root or "Asia" in root:
+                    if f.endswith(".npy"):
+                        rel = os.path.relpath(os.path.join(root, f), args.input_path)
+                        sample_id = os.path.splitext(rel)[0].replace("\\", "/")
+                        all_ids.append(sample_id)
+            else:
+                if f.endswith(".npy"):
+                    rel = os.path.relpath(os.path.join(root, f), args.input_path)
+                    sample_id = os.path.splitext(rel)[0].replace("\\", "/")
+                    all_ids.append(sample_id)
 
     by_id = defaultdict(list)
     for sid in all_ids:
@@ -75,7 +84,6 @@ def main():
     print(f"Saved: {args.output_path}")
     print(f"Shape: {arr.shape}")
     print("First row:", arr[0] if len(arr) else "EMPTY")
-
 
 if __name__ == "__main__":
     main()
