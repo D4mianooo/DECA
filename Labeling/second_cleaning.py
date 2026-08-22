@@ -1,16 +1,18 @@
 from pathlib import Path
 import argparse
 
-import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 from skimage.io import imread
-from skimage.transform import estimate_transform, warp
 import face_alignment
 
 SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 SUPPORTED_KPT_EXTENSIONS = {".npy"}
-IMAGE_SIZE = 224
+SHIFT_RATIO = 0.05
+EXPAND_TOP = 0.10
+EXPAND_LEFT = 0.20
+EXPAND_RIGHT = 0.20
+EXPAND_BOTTOM = 0.20
+LANDMARK_THRESHOLD = 0.10
 
 
 def _validate_file(path: Path, allowed_extensions, kind: str) -> Path:
@@ -89,89 +91,108 @@ def collect_image_kpt_pairs(image_path: Path, kpt_path: Path):
     raise ValueError("image_path and kpt_path must both be files or both be folders.")
 
 
-def crop_from_kpt(
-        image: np.ndarray,
-        kpt: np.ndarray,
-        image_size: int = IMAGE_SIZE,
-        height_ratio_shift: float = 0.0,
-        width_ratio_shift: float = 0.0,
-        top_expand: float = 0.0,
-        bottom_expand: float = 0.0,
-        left_expand: float = 0.0,
-        right_expand: float = 0.0,
-):
-    left = np.min(kpt[:, 0])
-    right = np.max(kpt[:, 0])
-    top = np.min(kpt[:, 1])
-    bottom = np.max(kpt[:, 1])
+def bbox_from_landmarks(landmarks: np.ndarray) -> np.ndarray:
+    """Return the tight [x1, y1, x2, y2] box around 2D landmarks."""
+    landmarks = np.asarray(landmarks, dtype=np.float32)
+    if landmarks.ndim != 2 or landmarks.shape[0] == 0 or landmarks.shape[1] != 2:
+        raise ValueError(
+            f"Expected nonempty landmarks with shape (N, 2), got {landmarks.shape}"
+        )
+    if not np.all(np.isfinite(landmarks)):
+        raise ValueError("Landmarks contain non-finite coordinates")
 
-    bw = right - left
-    bh = bottom - top
-
-    left = left - left_expand * bw
-    right = right + right_expand * bw
-    top = top - top_expand * bh
-    bottom = bottom + bottom_expand * bh
-
-    bw = right - left
-    bh = bottom - top
-
-    shift = np.array([width_ratio_shift * bw, height_ratio_shift * bh], dtype=np.float32)
-
-    old_size = (bw + bh) / 2.0
-    center = np.array(
-        [right - bw / 2.0, bottom - bh / 2.0],
-        dtype=np.float32,
-    )
-    center = center + shift
-    size = int(old_size)
-
-    src_pts = np.array(
+    return np.array(
         [
-            [center[0] - size / 2, center[1] - size / 2],
-            [center[0] - size / 2, center[1] + size / 2],
-            [center[0] + size / 2, center[1] - size / 2],
+            np.min(landmarks[:, 0]),
+            np.min(landmarks[:, 1]),
+            np.max(landmarks[:, 0]),
+            np.max(landmarks[:, 1]),
         ],
         dtype=np.float32,
     )
-    dst_pts = np.array(
-        [[0, 0], [0, image_size - 1], [image_size - 1, 0]],
+
+
+def bbox_dimensions(bbox: np.ndarray) -> np.ndarray:
+    """Return [width, height] for an [x1, y1, x2, y2] box."""
+    bbox = np.asarray(bbox, dtype=np.float32)
+    if bbox.shape != (4,) or not np.all(np.isfinite(bbox)):
+        raise ValueError(f"Expected a finite bounding box with shape (4,), got {bbox}")
+
+    dimensions = bbox[2:] - bbox[:2]
+    if np.any(dimensions <= 0):
+        raise ValueError(f"Bounding-box dimensions must be positive, got {dimensions}")
+    return dimensions
+
+
+def shift_bbox(bbox: np.ndarray, epsilon: np.ndarray) -> np.ndarray:
+    """Translate an [x1, y1, x2, y2] box by the [x, y] offset epsilon."""
+    bbox = np.asarray(bbox, dtype=np.float32)
+    epsilon = np.asarray(epsilon, dtype=np.float32)
+    if bbox.shape != (4,) or epsilon.shape != (2,):
+        raise ValueError("Expected bbox shape (4,) and epsilon shape (2,)")
+    return bbox + np.tile(epsilon, 2)
+
+
+def expand_bbox(bbox: np.ndarray, bbox_size: np.ndarray) -> np.ndarray:
+    """Expand a box using the paper's asymmetric margins."""
+    x1, y1, x2, y2 = np.asarray(bbox, dtype=np.float32)
+    bbox_width, bbox_height = np.asarray(bbox_size, dtype=np.float32)
+    return np.array(
+        [
+            x1 - EXPAND_LEFT * bbox_width,
+            y1 - EXPAND_TOP * bbox_height,
+            x2 + EXPAND_RIGHT * bbox_width,
+            y2 + EXPAND_BOTTOM * bbox_height,
+        ],
         dtype=np.float32,
     )
 
-    tform = estimate_transform("similarity", src_pts, dst_pts)
-    cropped_image = warp(image, tform.inverse, output_shape=(image_size, image_size))
-    return cropped_image
+
+def run_fan(fa, image: np.ndarray, bbox: np.ndarray) -> np.ndarray:
+    """Run FAN for one supplied box and return landmarks in image coordinates."""
+    predictions = fa.get_landmarks_from_image(
+        image,
+        detected_faces=[np.asarray(bbox, dtype=np.float32)],
+    )
+    if predictions is None or len(predictions) != 1:
+        raise ValueError("FAN did not return exactly one landmark set")
+
+    landmarks = np.asarray(predictions[0], dtype=np.float32)
+    if landmarks.ndim != 2 or landmarks.shape[0] == 0 or landmarks.shape[1] != 2:
+        raise ValueError(f"Expected FAN landmarks with shape (N, 2), got {landmarks.shape}")
+    if not np.all(np.isfinite(landmarks)):
+        raise ValueError("FAN returned non-finite landmarks")
+    return landmarks
 
 
-def show_comparison(
-        image: np.ndarray,
-        cropped_image: np.ndarray,
-        shifted_cropped_image: np.ndarray,
-        title: str,
-):
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    axes[0].imshow(image)
-    axes[0].set_title("Original")
-    axes[0].axis("off")
+def landmark_consistency_score(
+        original_landmarks: np.ndarray,
+        shifted_landmarks: np.ndarray,
+        epsilon: np.ndarray,
+        bbox_size: np.ndarray,
+) -> float:
+    """Compute max_i ||diag(bw, bh)^-1 (k2_i - epsilon - k1_i)||."""
+    original_landmarks = np.asarray(original_landmarks, dtype=np.float32)
+    shifted_landmarks = np.asarray(shifted_landmarks, dtype=np.float32)
+    epsilon = np.asarray(epsilon, dtype=np.float32)
+    bbox_size = np.asarray(bbox_size, dtype=np.float32)
 
-    axes[1].imshow(cropped_image)
-    axes[1].set_title(f"Cropped ({IMAGE_SIZE}x{IMAGE_SIZE})")
-    axes[1].axis("off")
+    if original_landmarks.shape != shifted_landmarks.shape:
+        raise ValueError("Original and shifted landmarks must have identical shapes")
+    if original_landmarks.ndim != 2 or original_landmarks.shape[0] == 0:
+        raise ValueError("Landmark arrays must be nonempty and two-dimensional")
+    if original_landmarks.shape[1] != 2:
+        raise ValueError("Landmark arrays must contain x/y coordinate pairs")
+    if epsilon.shape != (2,) or bbox_size.shape != (2,):
+        raise ValueError("epsilon and bbox_size must both have shape (2,)")
+    if np.any(bbox_size <= 0):
+        raise ValueError("Bounding-box dimensions must be positive")
 
-    axes[2].imshow(shifted_cropped_image)
-    axes[2].set_title(f"Shifted +5% ({IMAGE_SIZE}x{IMAGE_SIZE})")
-    axes[2].axis("off")
-
-    fig.suptitle(title)
-    plt.tight_layout()
-    plt.show()
-
-def _plot_image_with_landmarks(ax, image, kpt: np.ndarray, title: str):
-    ax.imshow(image)
-    ax.scatter(kpt[:, 0], kpt[:, 1], s=8, c="lime")
-    ax.set_title(title)
-    ax.axis("off")
+    delta = shifted_landmarks - epsilon - original_landmarks
+    distances = np.linalg.norm(delta / bbox_size, axis=1)
+    if not np.all(np.isfinite(distances)):
+        raise ValueError("Landmark distances contain non-finite values")
+    return float(np.max(distances))
 
 def main():
     parser = argparse.ArgumentParser()
@@ -197,39 +218,49 @@ def main():
         device='cuda'
     )
 
+    total_images = len(pairs)
+    passed_images = 0
+    skipped_images = 0
     for image_path, kpt_path in pairs:
         image = imread(str(image_path))
-        kpt = np.load(str(kpt_path))[:, :2]
+        source_landmarks = np.asarray(np.load(str(kpt_path))[:, :2], dtype=np.float32)
 
-        shifted_expanded_cropped_image = crop_from_kpt(
-            image=image,
-            kpt=kpt,
-            image_size=IMAGE_SIZE,
-            width_ratio_shift=0.05,
-            height_ratio_shift=0.05,
-            top_expand=0.10,
-            bottom_expand=0.20,
-            left_expand=0.20,
-            right_expand=0.20,
-        )
-        img = shifted_expanded_cropped_image
+        try:
+            original_bbox = bbox_from_landmarks(source_landmarks)
+            bbox_size = bbox_dimensions(original_bbox)
+            epsilon = SHIFT_RATIO * bbox_size
+            shifted_bbox = shift_bbox(original_bbox, epsilon)
 
-        if img.dtype != np.uint8:
-            img = np.clip(img * 255.0, 0, 255).astype(np.uint8)
+            expanded_original_bbox = expand_bbox(original_bbox, bbox_size)
+            expanded_shifted_bbox = expand_bbox(shifted_bbox, bbox_size)
 
-        fig, axes = plt.subplots(1, 2, figsize=(16, 5))
+            kpt1 = run_fan(fa, image, expanded_original_bbox)
+            kpt2 = run_fan(fa, image, expanded_shifted_bbox)
+            max_distance = landmark_consistency_score(
+                original_landmarks=kpt1,
+                shifted_landmarks=kpt2,
+                epsilon=epsilon,
+                bbox_size=bbox_size,
+            )
+        except (RuntimeError, ValueError) as error:
+            skipped_images += 1
+            print(f"[SKIP] {image_path.name}: {error}")
+            continue
 
-        preds = fa.get_landmarks_from_image(img)
+        if max_distance >= LANDMARK_THRESHOLD:
+            skipped_images += 1
+            print(
+                f"[SKIP] {image_path.name}: max_distance={max_distance:.6f} "
+                f">= {LANDMARK_THRESHOLD}"
+            )
+            continue
 
-        kpt2 = np.asarray(
-            preds[0],
-            dtype=np.float32
-        )
-
-        _plot_image_with_landmarks(axes[0], image, kpt, "Original")
-        _plot_image_with_landmarks(axes[1], img, kpt2, "Original")
-
-        plt.tight_layout()
-        plt.show()
+        passed_images += 1
+        print(f"[PASS] {image_path.name}: max_distance={max_distance:.6f}")
+    print(
+        f"[DEBUG] Passed filter: {passed_images}/{total_images} "
+        f"({(passed_images / total_images * 100.0) if total_images else 0.0:.2f}%), "
+        f"Skipped: {skipped_images}/{total_images}"
+    )
 if __name__ == "__main__":
     main()
