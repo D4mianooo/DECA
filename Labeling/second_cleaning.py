@@ -1,9 +1,11 @@
 from pathlib import Path
 import argparse
+from collections import defaultdict
 
 import numpy as np
 from skimage.io import imread
 import face_alignment
+from tqdm import tqdm
 
 SUPPORTED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 SUPPORTED_KPT_EXTENSIONS = {".npy"}
@@ -13,6 +15,50 @@ EXPAND_LEFT = 0.20
 EXPAND_RIGHT = 0.20
 EXPAND_BOTTOM = 0.20
 LANDMARK_THRESHOLD = 0.10
+
+
+def build_grouped_list(sample_ids, group_size, min_per_identity, seed):
+    by_id = defaultdict(list)
+    for sample_id in sample_ids:
+        identity = sample_id.split("/")[0]
+        by_id[identity].append(sample_id)
+
+    rows = []
+    rng = np.random.default_rng(seed)
+
+    for samples in by_id.values():
+        if len(samples) < min_per_identity:
+            continue
+
+        samples = sorted(samples)
+        for i in range(0, len(samples) - group_size + 1, group_size):
+            rows.append(samples[i:i + group_size])
+
+    if not rows:
+        for samples in by_id.values():
+            if not samples:
+                continue
+            rows.append(
+                list(
+                    rng.choice(
+                        samples,
+                        size=group_size,
+                        replace=len(samples) < group_size,
+                    )
+                )
+            )
+
+    return np.array(rows, dtype=str)
+
+
+def second_cleaning_output_path(image_path: Path) -> Path:
+    image_folder = image_path if image_path.is_dir() else image_path.parent
+    return image_folder.parent / f"{image_folder.name}_second_cleaning.npy"
+
+
+def sample_id_for(image_path: Path, image_root: Path) -> str:
+    relative_path = image_path.relative_to(image_root)
+    return relative_path.with_suffix("").as_posix()
 
 
 def _validate_file(path: Path, allowed_extensions, kind: str) -> Path:
@@ -27,6 +73,15 @@ def _collect_files_from_folder(folder: Path, allowed_extensions, kind: str):
     if not folder.is_dir():
         raise ValueError(f"{kind} path is not a folder: {folder}")
     files = sorted(
+        (
+            p for p in folder.rglob("*")
+            if p.is_file() and p.suffix.lower() in allowed_extensions
+        ),
+        key=lambda p: p.relative_to(folder).as_posix(),
+    )
+    if not folder.is_dir():
+        raise ValueError(f"{kind} path is not a folder: {folder}")
+    files = sorted(
         p for p in folder.iterdir()
         if p.is_file() and p.suffix.lower() in allowed_extensions
     )
@@ -35,7 +90,15 @@ def _collect_files_from_folder(folder: Path, allowed_extensions, kind: str):
     return files
 
 
-def _build_stem_index(files, kind: str):
+def _build_relative_index(files, root: Path, kind: str):
+    relative_to_file = {}
+    for p in files:
+        rel_key = p.relative_to(root).with_suffix("").as_posix()
+        if rel_key in relative_to_file:
+            raise ValueError(
+                f"Duplicate {kind} relative key '{rel_key}' found: {relative_to_file[rel_key]} and {p}"
+            )
+        relative_to_file[rel_key] = p
     stem_to_file = {}
     for p in files:
         stem = p.stem
@@ -70,8 +133,8 @@ def collect_image_kpt_pairs(image_path: Path, kpt_path: Path):
             kpt_path, SUPPORTED_KPT_EXTENSIONS, "kpt"
         )
 
-        image_index = _build_stem_index(image_files, "image")
-        kpt_index = _build_stem_index(kpt_files, "kpt")
+        image_index = _build_relative_index(image_files, image_path, "image")
+        kpt_index = _build_relative_index(kpt_files, kpt_path, "kpt")
 
         missing_kpt = sorted(stem for stem in image_index if stem not in kpt_index)
         if missing_kpt:
@@ -208,9 +271,24 @@ def main():
         type=Path,
         help="Path to a single keypoint file or a folder containing keypoint files",
     )
+    parser.add_argument("--group-size", type=int, default=5, help="Number of samples per row")
+    parser.add_argument(
+        "--min-per-identity",
+        type=int,
+        default=5,
+        help="Minimum samples needed per identity",
+    )
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
 
+    if args.group_size < 1:
+        raise ValueError("--group-size must be at least 1")
+    if args.min_per_identity < 1:
+        raise ValueError("--min-per-identity must be at least 1")
+
     pairs = collect_image_kpt_pairs(args.image_path, args.kpt_path)
+    image_folder = args.image_path if args.image_path.is_dir() else args.image_path.parent
+    image_root = image_folder.parent
 
     fa = face_alignment.FaceAlignment(
         face_alignment.LandmarksType.TWO_D,
@@ -220,8 +298,9 @@ def main():
 
     total_images = len(pairs)
     passed_images = 0
+    passed_sample_ids = []
     skipped_images = 0
-    for image_path, kpt_path in pairs:
+    for image_path, kpt_path in tqdm(pairs):
         image = imread(str(image_path))
         source_landmarks = np.asarray(np.load(str(kpt_path))[:, :2], dtype=np.float32)
 
@@ -244,23 +323,39 @@ def main():
             )
         except (RuntimeError, ValueError) as error:
             skipped_images += 1
-            print(f"[SKIP] {image_path.name}: {error}")
+            tqdm.write(f"[SKIP] {image_path.name}: {error}")
             continue
 
         if max_distance >= LANDMARK_THRESHOLD:
             skipped_images += 1
-            print(
+            tqdm.write(
                 f"[SKIP] {image_path.name}: max_distance={max_distance:.6f} "
                 f">= {LANDMARK_THRESHOLD}"
             )
             continue
 
         passed_images += 1
-        print(f"[PASS] {image_path.name}: max_distance={max_distance:.6f}")
+        passed_sample_ids.append(sample_id_for(image_path, image_root))
+        tqdm.write(f"[PASS] {image_path.name}: max_distance={max_distance:.6f}")
     print(
         f"[DEBUG] Passed filter: {passed_images}/{total_images} "
         f"({(passed_images / total_images * 100.0) if total_images else 0.0:.2f}%), "
         f"Skipped: {skipped_images}/{total_images}"
     )
+
+    grouped_list = build_grouped_list(
+        passed_sample_ids,
+        group_size=args.group_size,
+        min_per_identity=args.min_per_identity,
+        seed=args.seed,
+    )
+    output_path = second_cleaning_output_path(args.image_path)
+    np.save(output_path, grouped_list)
+    written_images = int(grouped_list.size)
+
+    print(f"Second cleaning finished: {passed_images:,} images passed.")
+    print(f"Created list with {written_images:,} images: {output_path}")
+
+
 if __name__ == "__main__":
     main()
