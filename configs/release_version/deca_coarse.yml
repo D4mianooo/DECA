@@ -6,16 +6,17 @@
 # Time:
 # around 15min/1000iterations
 # in total, needs around 
-output_dir: "TUL/coarse"
-pretrained_modelpath: "TUL/pretrain/model.tar"
+output_dir: "/mnt/d/datasets/coarse@2026-08-06_1"
+pretrained_modelpath: "TUL/pretrain@2026-08-06_1/model.tar"
 dataset:
-  training_data: [ 'vggface2' ]
-  eval_data: [ 'vggface2' ]
-  batch_size: 8
+  training_data: ['vggface2', "vggface2hq", "ethnicity", "vox2"]
+  eval_data: ['vggface2']
+  batch_size: 1
+  gradient_accumulation_steps: 32
   K: 2
 train:
   resume: True
-  max_epochs: 10
+  max_epochs: 2
   max_steps: 200000
   log_steps: 10
   vis_steps: 500
