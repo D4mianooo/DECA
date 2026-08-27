@@ -310,7 +310,7 @@ class Trainer(object):
             self.val_iter = iter(self.val_dataloader)
             batch = next(self.val_iter)
         with torch.no_grad():
-            val_losses, _ = self.training_step(batch, batch_nb=0, is_validation=True)
+            #val_losses, _ = self.training_step(batch, batch_nb=0, is_validation=True)
             images = batch['image'].to(self.device); images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1])
             images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1])
             codedict = self.deca.encode(images)
@@ -320,12 +320,12 @@ class Trainer(object):
         grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
         if self.cfg.train.write_summary:
             self.writer.add_image('val_images', (grid_image / 255.).astype(np.float32).transpose(2, 0, 1), self.global_step)
-            for k, v in val_losses.items():
-                self.writer.add_scalar('val_loss/' + k, v, global_step=self.global_step)
+            #for k, v in val_losses.items():
+               # self.writer.add_scalar('val_loss/' + k, v, global_step=self.global_step)
 
         val_loss_info = f"[VAL] ExpName: {self.cfg.exp_name}, Step: {self.global_step}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} | "
-        for k, v in val_losses.items():
-            val_loss_info += f"{k}: {v:.4f}, "
+       # for k, v in val_losses.items():
+            #val_loss_info += f"{k}: {v:.4f}, "
         logger.info(val_loss_info)
 
         self.deca.train()
