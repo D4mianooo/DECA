@@ -36,31 +36,14 @@ class VoxelDataset(Dataset):
         elif dataname == 'vox2':
             # clean version: filter out images with bad lanmark labels, may lack extreme pose example
             self.kpt_suffix = '.npy'
-            self.imagefolder = '/ps/scratch/face2d3d/VoxCeleb/vox2/dev/images_cropped_full_height'
-            self.kptfolder = '/ps/scratch/face2d3d/vox2_best_clips_annotated_torch7'
-            self.segfolder = '/ps/scratch/face2d3d/texture_in_the_wild_code/vox2_best_clips_cropped_frames_seg/test_crop_size_400_batch/'
+            self.imagefolder = '/mnt/d/datasets/Vox2/train/'
+            self.kptfolder = '/mnt/d/datasets/Vox2/train_annotated_fan'
+            self.segfolder = '/mnt/d/datasets/Vox2/train_seg'
 
-            cleanlist_path = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_cleaning_codes/vox2_best_clips_info_max_normal_50_images_loadinglist.npy'
-            cleanlist = np.load(cleanlist_path, allow_pickle=True)
-            self.face_dict = {}
-            for line in cleanlist:
-                person_id, video_id, face_id, name = line.split('/')
-                key = person_id + '/' + video_id + '/' + face_id
-                if key not in self.face_dict.keys():
-                    self.face_dict[key] = []
-                else:
-                    self.face_dict[key].append(name)
-            # filter face
-            keys = list(self.face_dict.keys())
-            for key in keys:
-                if len(self.face_dict[key]) < self.K:
-                    del self.face_dict[key]
+            cleanlist_path = '/mnt/d/datasets/Vox2/my_vox2_train_list.npy'
+            self.cleanlist = np.load(cleanlist_path).astype('str')
 
-        self.face_list = list(self.face_dict.keys())
-        n_train = n_train if n_train < len(self.face_list) else len(self.face_list)
-        self.face_list = list(self.face_dict.keys())[:n_train]
-        if isEval:
-            self.face_list = list(self.face_dict.keys())[:n_train][-100:]
+
         self.isTemporal = isTemporal
         self.scale = scale #[scale_min, scale_max]
         self.trans_scale = trans_scale #[dx, dy]
@@ -69,26 +52,16 @@ class VoxelDataset(Dataset):
             self.K = 1
 
     def __len__(self):
-        return len(self.face_list)
+        return len(self.cleanlist)
     
     def __getitem__(self, idx):
-        key = self.face_list[idx]    
-        person_id, video_id, face_id = key.split('/')
-        name_list = self.face_dict[key]
-        ind = np.random.randint(low=0, high=len(name_list))
-
         images_list = []; kpt_list = []; fullname_list = []; mask_list = []
-        if self.isTemporal:
-            random_start = np.random.randint(low=0, high=len(name_list)-self.K)
-            sample_list = range(random_start, random_start + self.K)
-        else:
-            sample_list = np.array((np.random.randint(low=0, high=len(name_list), size=self.K)))
 
-        for i in sample_list:
-            name = name_list[i]
-            image_path = (os.path.join(self.imagefolder, person_id, video_id, face_id, name + '.png'))
-            kpt_path = (os.path.join(self.kptfolder, person_id, video_id, face_id, name + self.kpt_suffix))
-            seg_path = (os.path.join(self.segfolder, person_id, video_id, face_id, name + '.npy'))
+        for i in range(self.K):
+            name = self.cleanlist[idx, i]
+            image_path = (os.path.join(self.imagefolder, name + '.jpg'))
+            kpt_path = (os.path.join(self.kptfolder, name + self.kpt_suffix))
+            seg_path = (os.path.join(self.segfolder, name + '.npy'))
                                             
             image = imread(image_path)/255.
             kpt = np.load(kpt_path)[:,:2]
