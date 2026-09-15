@@ -126,6 +126,37 @@ def albedo_same_loss(albedo, ring_elements, weight=1.):
         return loss * weight
 
 ### ------------------------------------- Losses/Regularizations for vertices
+def huber_2d_landmark_loss(kp_gt, kp_pred, vis, delta=1.0):
+    """
+    kp_gt: [N, 2]  (x, y)
+    kp_pred: [N, 2]
+    vis: [N]       visibility weights in [0, 1]
+    delta: Huber delta
+    """
+    diff = kp_gt - kp_pred  # [N, 2]
+    abs_diff = torch.abs(diff)
+
+    # Huber per coordinate
+    quad_mask = abs_diff <= delta
+    linear_mask = ~quad_mask
+
+    loss_coord = torch.where(
+        quad_mask,
+        0.5 * diff ** 2,
+        delta * (abs_diff - 0.5 * delta)
+    )  # [N, 2]
+
+    # Sum over x,y to get per-keypoint loss
+    loss_kp = loss_coord.sum(dim=1)  # [N]
+
+    # Visibility-weighted sum
+    loss_weighted = (loss_kp * vis).sum()
+
+    # Normalize by total visibility (with small epsilon)
+    norm = vis.sum() * 2.0 + 1e-8  # same scaling as original DECA code
+
+    return loss_weighted / norm
+
 def batch_kp_2d_l1_loss(real_2d_kp, predicted_2d_kp, weights=None):
     """
     Computes the l1 loss between the ground truth keypoints and the predicted keypoints
@@ -150,7 +181,8 @@ def landmark_loss(predicted_landmarks, landmarks_gt, weight=1.):
         real_2d = torch.cat([landmarks_gt, torch.ones((landmarks_gt.shape[0], 68, 1)).cuda()], dim=-1)
     # real_2d = torch.cat(landmarks_gt).cuda()
 
-    loss_lmk_2d = batch_kp_2d_l1_loss(real_2d, predicted_landmarks)
+    # loss_lmk_2d = batch_kp_2d_l1_loss(real_2d, predicted_landmarks)
+    loss_lmk_2d = huber_2d_landmark_loss(real_2d, predicted_landmarks)
     return loss_lmk_2d * weight
 
 
