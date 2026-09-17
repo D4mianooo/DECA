@@ -183,7 +183,8 @@ def eyed_loss(predicted_landmarks, landmarks_gt, weight=1.):
     pred_eyed = eye_dis(predicted_landmarks[:,:,:2])
     gt_eyed = eye_dis(real_2d[:,:,:2])
 
-    loss = (pred_eyed - gt_eyed).abs().mean()
+    #loss = (pred_eyed - gt_eyed).abs().mean()
+    loss = F.huber_loss(pred_eyed, gt_eyed, reduction='mean', delta=1.0)
     return loss
 
 def lip_dis(landmarks):
@@ -202,7 +203,8 @@ def lipd_loss(predicted_landmarks, landmarks_gt, weight=1.):
     pred_lipd = lip_dis(predicted_landmarks[:,:,:2])
     gt_lipd = lip_dis(real_2d[:,:,:2])
 
-    loss = (pred_lipd - gt_lipd).abs().mean()
+    #loss = (pred_lipd - gt_lipd).abs().mean()
+    loss = F.huber_loss(pred_lipd, gt_lipd, reduction='mean', delta=1.0)
     return loss
     
 def weighted_landmark_loss(predicted_landmarks, landmarks_gt, weight=1.):
