@@ -126,34 +126,15 @@ def albedo_same_loss(albedo, ring_elements, weight=1.):
         return loss * weight
 
 ### ------------------------------------- Losses/Regularizations for vertices
-def huber_2d_landmark_loss(kp_gt, kp_pred, vis, delta=1.0):
-    """
-    kp_gt: [N, 2]  (x, y)
-    kp_pred: [N, 2]
-    vis: [N]       visibility weights in [0, 1]
-    delta: Huber delta
-    """
-    diff = kp_gt - kp_pred  # [N, 2]
-    abs_diff = torch.abs(diff)
+def huber_2d_landmark_loss(real_2d_kp, predicted_2d_kp, delta=1.0):
+    kp_gt = real_2d_kp.view(-1, 3)
+    kp_pred = predicted_2d_kp.contiguous().view(-1, 2)
 
-    # Huber per coordinate
-    quad_mask = abs_diff <= delta
-    linear_mask = ~quad_mask
-
-    loss_coord = torch.where(
-        quad_mask,
-        0.5 * diff ** 2,
-        delta * (abs_diff - 0.5 * delta)
-    )  # [N, 2]
-
-    # Sum over x,y to get per-keypoint loss
-    loss_kp = loss_coord.sum(dim=1)  # [N]
-
-    # Visibility-weighted sum
+    loss_kp = F.huber_loss(kp_pred, kp_gt[:, :2], delta=delta)
+    vis = kp_gt[:, 2]
     loss_weighted = (loss_kp * vis).sum()
 
-    # Normalize by total visibility (with small epsilon)
-    norm = vis.sum() * 2.0 + 1e-8  # same scaling as original DECA code
+    norm = vis.sum() * 2.0 + 1e-8
 
     return loss_weighted / norm
 
