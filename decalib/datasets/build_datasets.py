@@ -9,7 +9,7 @@ from skimage.io import imread, imsave
 from skimage.transform import estimate_transform, warp, resize, rescale
 from glob import glob
 
-from .vggface import VGGFace2Dataset
+from .vggface import VGGFace2Dataset, VGGFace2HQDataset
 from .ethnicity import EthnicityDataset
 from .aflw2000 import AFLW2000
 from .now import NoWDataset

@@ -22,7 +22,7 @@ class EthnicityDataset(Dataset):
 
         # hq:
         # datafile = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_cleaning_codes/ringnetpp_training_lists/second_cleaning/vggface2_bbx_size_bigger_than_400_train_list_max_normal_100_ring_5_1_serial.npy'
-        datafile = './datasets/BUPT/race_per_7000_train_list.npy'
+        datafile = './datasets/BUPT/race_per_7000_second_cleaning.npy'
         self.data_lines = np.load(datafile).astype('str')
 
         self.isTemporal = isTemporal

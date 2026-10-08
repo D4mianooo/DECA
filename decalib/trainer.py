@@ -72,7 +72,7 @@ class Trainer(object):
         else:
             print("[INFO] <TRAINER> Identity loss")
             self.id_loss = lossfunc.VGGFace2Loss(pretrained_model=self.cfg.model.fr_model_path)
-        
+            #self.id_loss = lossfunc.ArcFaceLose()
         logger.add(os.path.join(self.cfg.output_dir, self.cfg.train.log_dir, 'train.log'))
         if self.cfg.train.write_summary:
             from torch.utils.tensorboard import SummaryWriter

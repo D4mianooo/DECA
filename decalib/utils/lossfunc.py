@@ -8,6 +8,9 @@ import torchvision.models as models
 import cv2
 import torchfile
 from torch.autograd import Variable
+from insightface.model_zoo import get_model
+from insightface.app import FaceAnalysis
+from torch.nn.functional import embedding_bag
 
 from . import util
 
@@ -226,7 +229,8 @@ def weighted_landmark_loss(predicted_landmarks, landmarks_gt, weight=1.):
     weights[48] = 3
     weights[54] = 3
 
-    loss_lmk_2d = batch_kp_2d_l1_loss(real_2d, predicted_landmarks, weights)
+    #loss_lmk_2d = batch_kp_2d_l1_loss(real_2d, predicted_landmarks, weights)
+    loss_lmk_2d = huber_2d_landmark_loss(real_2d, predicted_landmarks)
     return loss_lmk_2d * weight
 
 def landmark_loss_tensor(predicted_landmarks, landmarks_gt, weight=1.):
@@ -688,3 +692,49 @@ class VGGFace2Loss(nn.Module):
         # loss = ((gen_out - tar_out)**2).mean()
         loss = self._cos_metric(gen_out, tar_out).mean()
         return loss
+
+class ArcFaceLose(nn.Module):
+    def __init__(self, model_name="arcface_r50"):
+        super(ArcFaceLose, self).__init__()
+        self.rec_model = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+        self.rec_model.prepare(ctx_id=0, det_size=(224, 224))
+
+        if self.rec_model is None:
+            raise RuntimeError(f"InsightFace model '{model_name}' is None. "
+                               "Check InsightFace installation and model name.")
+
+    def transform(self, img):
+        img = img.detach().clamp(0, 1)              # FaceAnalysis is non-differentiable
+        img = (img * 255).to(torch.uint8)           # uint8 [0, 255]
+        img = img.permute(0, 2, 3, 1)               # [B, H, W, C], still RGB
+        img = img[..., [2, 1, 0]]                   # RGB -> BGR
+        return img.cpu().numpy()                  # NumPy [B, H, W, C]
+
+    def _cos_metric(self, generated_images, target_images):
+        losses = []
+        for index, (generated_image, target_image) in enumerate(
+                zip(generated_images, target_images)):
+            generated_faces = self.rec_model.get(generated_image)
+            target_faces = self.rec_model.get(target_image)
+
+            if not generated_faces or not target_faces:
+                # A pair without two detected faces cannot have an ArcFace
+                # identity distance.  Skip it instead of indexing faces[0].
+                continue
+
+            generated_embedding = torch.from_numpy(generated_faces[0].embedding).float()
+            target_embedding = torch.from_numpy(target_faces[0].embedding).float()
+            losses.append(1.0 - F.cosine_similarity(
+                generated_embedding.unsqueeze(0),
+                target_embedding.unsqueeze(0), dim=1))
+
+        if  losses:
+            return torch.cat(losses).mean()
+
+        print("No faces detected.  Returning 0.")
+        return 0
+
+    def forward(self, gen, tar):
+        gen = self.transform(gen)
+        tar = self.transform(tar)
+        return self._cos_metric(gen, tar)

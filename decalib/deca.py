@@ -142,7 +142,7 @@ class DECA(nn.Module):
             with torch.no_grad():
                 parameters = self.E_flame(images)
         else:
-            parameters = self.E_flame(images)
+                parameters = self.E_flame(images)
         codedict = self.decompose_code(parameters, self.param_dict)
         codedict['images'] = images
         if use_detail:

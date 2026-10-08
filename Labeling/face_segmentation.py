@@ -34,6 +34,11 @@ def parse_args():
         help="Root output folder for .npy masks.",
     )
     parser.add_argument(
+        "--annotated-fan-path",
+        required=True,
+        help="Root folder with FAN .npy annotations used to filter input images.",
+    )
+    parser.add_argument(
         "--num-workers",
         type=int,
         default=1,
@@ -74,18 +79,19 @@ def create_segmenter_options(model_path: str):
     )
 
 
-def iter_images(input_path: Path):
+def iter_images(input_path: Path, input_root: Path, annotated_fan_root: Path):
     if input_path.is_file():
         if input_path.suffix.lower() in IMAGE_EXTENSIONS:
-            annotated_fan_path = input_path.parent / "race_per_7000_annotated_fan" / input_path.with_suffix(".npy").name
+            relative_to_input = input_path.relative_to(input_root)
+            annotated_fan_path = annotated_fan_root / relative_to_input.with_suffix(".npy")
             if annotated_fan_path.exists():
                 yield input_path
         return
 
     for path in input_path.rglob("*"):
         if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
-            relative_to_input = path.relative_to(input_path)
-            annotated_fan_path = input_path.parent / "race_per_7000_annotated_fan" / relative_to_input.with_suffix(".npy")
+            relative_to_input = path.relative_to(input_root)
+            annotated_fan_path = annotated_fan_root / relative_to_input.with_suffix(".npy")
             if annotated_fan_path.exists():
                 yield path
 
@@ -106,10 +112,11 @@ def iter_unprocessed_worker_images(
         input_path: Path,
         input_root: Path,
         output_root: Path,
+        annotated_fan_root: Path,
         num_workers: int,
         worker_id: int,
 ):
-    for img_path in iter_images(input_path):
+    for img_path in iter_images(input_path, input_root, annotated_fan_root):
         if not belongs_to_worker(img_path, input_root, num_workers, worker_id):
             continue
 
@@ -153,6 +160,8 @@ def main():
 
     input_path = Path(args.input_folder).resolve()
     output_root = Path(args.output_image_folder).resolve()
+    annotated_fan_root = Path(args.annotated_fan_path).resolve()
+
     output_root.mkdir(parents=True, exist_ok=True)
 
     input_root = input_path if input_path.is_dir() else input_path.parent
@@ -161,6 +170,7 @@ def main():
         input_path=input_path,
         input_root=input_root,
         output_root=output_root,
+        annotated_fan_root=annotated_fan_root,
         num_workers=args.num_workers,
         worker_id=args.worker_id,
     )

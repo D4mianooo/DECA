@@ -6,8 +6,8 @@
 # Time:
 # around 15min/1000iterations
 # in total, needs around 
-output_dir: "/mnt/d/datasets/coarse@2026-08-06_1"
-pretrained_modelpath: "TUL/pretrain@2026-08-06_1/model.tar"
+output_dir: "/mnt/d/datasets/coarse-FINAL-mp"
+pretrained_modelpath: "/mnt/d/datasets/pretrain-FINAL-mp/model.tar"
 dataset:
   training_data: ['vggface2', "vggface2hq", "ethnicity", "vox2"]
   eval_data: ['vggface2']

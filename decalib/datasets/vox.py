@@ -40,7 +40,7 @@ class VoxelDataset(Dataset):
             self.kptfolder = '/mnt/d/datasets/Vox2/train_annotated_fan'
             self.segfolder = '/mnt/d/datasets/Vox2/train_seg'
 
-            cleanlist_path = '/mnt/d/datasets/Vox2/my_vox2_train_list.npy'
+            cleanlist_path = '/mnt/d/datasets/Vox2/train_second_cleaning.npy'
             self.cleanlist = np.load(cleanlist_path).astype('str')
 
 

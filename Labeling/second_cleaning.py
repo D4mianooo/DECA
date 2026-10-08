@@ -1,8 +1,11 @@
 from pathlib import Path
 import argparse
 from collections import defaultdict
+import os
+import json
 
 import numpy as np
+from PIL import Image, ImageFile, UnidentifiedImageError
 from skimage.io import imread
 import face_alignment
 from tqdm import tqdm
@@ -56,10 +59,14 @@ def second_cleaning_output_path(image_path: Path) -> Path:
     return image_folder.parent / f"{image_folder.name}_second_cleaning.npy"
 
 
-def sample_id_for(image_path: Path, image_root: Path) -> str:
-    relative_path = image_path.relative_to(image_root)
-    return relative_path.with_suffix("").as_posix()
+def second_cleaning_resume_path(image_path: Path) -> Path:
+    image_folder = image_path if image_path.is_dir() else image_path.parent
+    return image_folder.parent / f"{image_folder.name}_second_cleaning_passed_ids.jsonl"
 
+
+def sample_id_for(image_path: Path, image_root: Path) -> str:
+    relative_stem = image_path.relative_to(image_root).with_suffix("")
+    return relative_stem.as_posix()
 
 def _validate_file(path: Path, allowed_extensions, kind: str) -> Path:
     if not path.is_file():
@@ -69,93 +76,101 @@ def _validate_file(path: Path, allowed_extensions, kind: str) -> Path:
     return path
 
 
-def _collect_files_from_folder(folder: Path, allowed_extensions, kind: str):
+def _iter_files_recursive(folder: Path, allowed_extensions, kind: str):
     if not folder.is_dir():
         raise ValueError(f"{kind} path is not a folder: {folder}")
-    files = sorted(
-        (
-            p for p in folder.rglob("*")
-            if p.is_file() and p.suffix.lower() in allowed_extensions
-        ),
-        key=lambda p: p.relative_to(folder).as_posix(),
-    )
-    if not folder.is_dir():
-        raise ValueError(f"{kind} path is not a folder: {folder}")
-    files = sorted(
-        p for p in folder.iterdir()
-        if p.is_file() and p.suffix.lower() in allowed_extensions
-    )
-    if not files:
-        raise ValueError(f"No supported {kind} files found in folder: {folder}")
-    return files
+    for root, dirnames, filenames in os.walk(folder):
+        dirnames.sort()
+        filenames.sort()
+        root_path = Path(root)
+        for filename in filenames:
+            p = root_path / filename
+            if p.suffix.lower() in allowed_extensions:
+                yield p
 
 
-def _build_relative_index(files, root: Path, kind: str):
-    relative_to_file = {}
-    for p in files:
-        rel_key = p.relative_to(root).with_suffix("").as_posix()
-        if rel_key in relative_to_file:
-            raise ValueError(
-                f"Duplicate {kind} relative key '{rel_key}' found: {relative_to_file[rel_key]} and {p}"
-            )
-        relative_to_file[rel_key] = p
-    stem_to_file = {}
-    for p in files:
-        stem = p.stem
-        if stem in stem_to_file:
-            raise ValueError(
-                f"Duplicate {kind} stem '{stem}' found: {stem_to_file[stem]} and {p}"
-            )
-        stem_to_file[stem] = p
-    return stem_to_file
+def _has_matching_image_for_rel_stem(image_root: Path, rel_stem: Path) -> bool:
+    for ext in SUPPORTED_IMAGE_EXTENSIONS:
+        if (image_root / rel_stem).with_suffix(ext).is_file():
+            return True
+    return False
 
 
-def collect_image_kpt_pairs(image_path: Path, kpt_path: Path):
+def count_image_kpt_pairs(image_path: Path, kpt_path: Path) -> int:
     image_is_file = image_path.is_file()
     image_is_dir = image_path.is_dir()
-    kpt_is_file = kpt_path.is_file()
-    kpt_is_dir = kpt_path.is_dir()
 
-    if image_is_file and kpt_is_file:
+    if image_is_file:
         image_file = _validate_file(image_path, SUPPORTED_IMAGE_EXTENSIONS, "image")
-        kpt_file = _validate_file(kpt_path, SUPPORTED_KPT_EXTENSIONS, "kpt")
-        if image_file.stem != kpt_file.stem:
-            raise ValueError(
-                f"Image and kpt names must match (without extension): {image_file.name} vs {kpt_file.name}"
-            )
-        return [(image_file, kpt_file)]
+        if kpt_path.is_dir():
+            kpt_file = (kpt_path / image_file.name).with_suffix(".npy")
+        else:
+            kpt_file = image_file.with_suffix(".npy") if str(kpt_path) == "" else kpt_path
 
-    if image_is_dir and kpt_is_dir:
-        image_files = _collect_files_from_folder(
-            image_path, SUPPORTED_IMAGE_EXTENSIONS, "image"
-        )
-        kpt_files = _collect_files_from_folder(
-            kpt_path, SUPPORTED_KPT_EXTENSIONS, "kpt"
-        )
+        if not kpt_file.is_file():
+            return 0
+        _validate_file(kpt_file, SUPPORTED_KPT_EXTENSIONS, "kpt")
+        return 1
 
-        image_index = _build_relative_index(image_files, image_path, "image")
-        kpt_index = _build_relative_index(kpt_files, kpt_path, "kpt")
+    if image_is_dir:
+        if not kpt_path.is_dir():
+            raise ValueError(f"kpt path must be a folder when image path is a folder: {kpt_path}")
 
-        missing_kpt = sorted(stem for stem in image_index if stem not in kpt_index)
-        if missing_kpt:
-            raise ValueError(
-                "Missing kpt files for image stems: {}".format(", ".join(missing_kpt))
-            )
+        count = 0
+        for image_file in _iter_files_recursive(image_path, SUPPORTED_IMAGE_EXTENSIONS, "image"):
+            rel_image = image_file.relative_to(image_path)
+            kpt_file = (kpt_path / rel_image).with_suffix(".npy")
+            if not kpt_file.is_file():
+                continue
+            count += 1
 
-        extra_kpt = sorted(stem for stem in kpt_index if stem not in image_index)
-        if extra_kpt:
-            raise ValueError(
-                "Kpt files without matching image stems: {}".format(", ".join(extra_kpt))
-            )
+        return count
 
-        stems = sorted(image_index.keys())
-        return [(image_index[s], kpt_index[s]) for s in stems]
+    raise ValueError(f"image path must be a file or folder: {image_path}")
 
-    raise ValueError("image_path and kpt_path must both be files or both be folders.")
 
+def iter_image_kpt_pairs(image_path: Path, kpt_path: Path):
+    image_is_file = image_path.is_file()
+    image_is_dir = image_path.is_dir()
+
+    if image_is_file:
+        image_file = _validate_file(image_path, SUPPORTED_IMAGE_EXTENSIONS, "image")
+        if kpt_path.is_dir():
+            kpt_file = (kpt_path / image_file.name).with_suffix(".npy")
+        else:
+            kpt_file = kpt_path
+
+        if not kpt_file.is_file():
+            tqdm.write(f"[SKIP] Missing kpt file for image: {image_file.name}")
+            return
+
+        _validate_file(kpt_file, SUPPORTED_KPT_EXTENSIONS, "kpt")
+        yield image_file, kpt_file
+        return
+
+    if image_is_dir:
+        if not kpt_path.is_dir():
+            raise ValueError(f"kpt path must be a folder when image path is a folder: {kpt_path}")
+
+        found_image = False
+        for image_file in _iter_files_recursive(image_path, SUPPORTED_IMAGE_EXTENSIONS, "image"):
+            found_image = True
+            rel_image = image_file.relative_to(image_path)
+            kpt_file = (kpt_path / rel_image).with_suffix(".npy")
+
+            if not kpt_file.is_file():
+                tqdm.write(f"[SKIP] Missing kpt file: {rel_image.as_posix()}")
+                continue
+
+            yield image_file, kpt_file
+
+        if not found_image:
+            raise ValueError(f"No supported image files found in folder: {image_path}")
+        return
+
+    raise ValueError(f"image path must be a file or folder: {image_path}")
 
 def bbox_from_landmarks(landmarks: np.ndarray) -> np.ndarray:
-    """Return the tight [x1, y1, x2, y2] box around 2D landmarks."""
     landmarks = np.asarray(landmarks, dtype=np.float32)
     if landmarks.ndim != 2 or landmarks.shape[0] == 0 or landmarks.shape[1] != 2:
         raise ValueError(
@@ -176,7 +191,6 @@ def bbox_from_landmarks(landmarks: np.ndarray) -> np.ndarray:
 
 
 def bbox_dimensions(bbox: np.ndarray) -> np.ndarray:
-    """Return [width, height] for an [x1, y1, x2, y2] box."""
     bbox = np.asarray(bbox, dtype=np.float32)
     if bbox.shape != (4,) or not np.all(np.isfinite(bbox)):
         raise ValueError(f"Expected a finite bounding box with shape (4,), got {bbox}")
@@ -188,7 +202,6 @@ def bbox_dimensions(bbox: np.ndarray) -> np.ndarray:
 
 
 def shift_bbox(bbox: np.ndarray, epsilon: np.ndarray) -> np.ndarray:
-    """Translate an [x1, y1, x2, y2] box by the [x, y] offset epsilon."""
     bbox = np.asarray(bbox, dtype=np.float32)
     epsilon = np.asarray(epsilon, dtype=np.float32)
     if bbox.shape != (4,) or epsilon.shape != (2,):
@@ -197,7 +210,6 @@ def shift_bbox(bbox: np.ndarray, epsilon: np.ndarray) -> np.ndarray:
 
 
 def expand_bbox(bbox: np.ndarray, bbox_size: np.ndarray) -> np.ndarray:
-    """Expand a box using the paper's asymmetric margins."""
     x1, y1, x2, y2 = np.asarray(bbox, dtype=np.float32)
     bbox_width, bbox_height = np.asarray(bbox_size, dtype=np.float32)
     return np.array(
@@ -206,13 +218,12 @@ def expand_bbox(bbox: np.ndarray, bbox_size: np.ndarray) -> np.ndarray:
             y1 - EXPAND_TOP * bbox_height,
             x2 + EXPAND_RIGHT * bbox_width,
             y2 + EXPAND_BOTTOM * bbox_height,
-        ],
+            ],
         dtype=np.float32,
     )
 
 
 def run_fan(fa, image: np.ndarray, bbox: np.ndarray) -> np.ndarray:
-    """Run FAN for one supplied box and return landmarks in image coordinates."""
     predictions = fa.get_landmarks_from_image(
         image,
         detected_faces=[np.asarray(bbox, dtype=np.float32)],
@@ -234,7 +245,6 @@ def landmark_consistency_score(
         epsilon: np.ndarray,
         bbox_size: np.ndarray,
 ) -> float:
-    """Compute max_i ||diag(bw, bh)^-1 (k2_i - epsilon - k1_i)||."""
     original_landmarks = np.asarray(original_landmarks, dtype=np.float32)
     shifted_landmarks = np.asarray(shifted_landmarks, dtype=np.float32)
     epsilon = np.asarray(epsilon, dtype=np.float32)
@@ -256,6 +266,40 @@ def landmark_consistency_score(
     if not np.all(np.isfinite(distances)):
         raise ValueError("Landmark distances contain non-finite values")
     return float(np.max(distances))
+
+
+def load_passed_ids_jsonl(path: Path):
+    if not path.exists():
+        return []
+    passed = []
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict) and "id" in obj:
+                    passed.append(str(obj["id"]))
+                else:
+                    passed.append(line)
+            except json.JSONDecodeError:
+                passed.append(line)
+    return list(dict.fromkeys(passed))
+
+
+def append_passed_id_jsonl(path: Path, sample_id: str):
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"id": sample_id}, ensure_ascii=False) + "\n")
+
+def load_image_strict(image_path: Path) -> np.ndarray:
+    try:
+        with Image.open(str(image_path)) as img:
+            img = img.convert("RGB")
+            return np.asarray(img)
+    except (OSError, UnidentifiedImageError) as error:
+        raise RuntimeError("Failed to decode image {}: {}".format(image_path, error))
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -286,22 +330,36 @@ def main():
     if args.min_per_identity < 1:
         raise ValueError("--min-per-identity must be at least 1")
 
-    pairs = collect_image_kpt_pairs(args.image_path, args.kpt_path)
+    pair_iter = iter_image_kpt_pairs(args.image_path, args.kpt_path)
+
     image_folder = args.image_path if args.image_path.is_dir() else args.image_path.parent
-    image_root = image_folder.parent
+    output_path = second_cleaning_output_path(args.image_path)
+    resume_path = second_cleaning_resume_path(args.image_path)
 
     fa = face_alignment.FaceAlignment(
         face_alignment.LandmarksType.TWO_D,
         flip_input=False,
-        device='cuda'
+        device="cuda",
     )
 
-    total_images = len(pairs)
-    passed_images = 0
-    passed_sample_ids = []
+    passed_sample_ids = load_passed_ids_jsonl(resume_path)
+    if passed_sample_ids:
+        tqdm.write(f"[RESUME] Loaded {len(passed_sample_ids)} passed samples from {resume_path}")
+
+    passed_sample_id_set = set(passed_sample_ids)
+    passed_images = len(passed_sample_ids)
     skipped_images = 0
-    for image_path, kpt_path in tqdm(pairs):
-        image = imread(str(image_path))
+
+    for image_path, kpt_path in tqdm(pair_iter):
+        sample_id = sample_id_for(image_path, image_folder)
+        if sample_id in passed_sample_id_set:
+            continue
+
+        try:
+            image = load_image_strict(Path(image_path))
+        except RuntimeError as error:
+            print("[WARN] {}".format(error))
+            continue
         source_landmarks = np.asarray(np.load(str(kpt_path))[:, :2], dtype=np.float32)
 
         try:
@@ -335,13 +393,10 @@ def main():
             continue
 
         passed_images += 1
-        passed_sample_ids.append(sample_id_for(image_path, image_root))
+        passed_sample_ids.append(sample_id)
+        passed_sample_id_set.add(sample_id)
+        append_passed_id_jsonl(resume_path, sample_id)
         tqdm.write(f"[PASS] {image_path.name}: max_distance={max_distance:.6f}")
-    print(
-        f"[DEBUG] Passed filter: {passed_images}/{total_images} "
-        f"({(passed_images / total_images * 100.0) if total_images else 0.0:.2f}%), "
-        f"Skipped: {skipped_images}/{total_images}"
-    )
 
     grouped_list = build_grouped_list(
         passed_sample_ids,
@@ -349,12 +404,17 @@ def main():
         min_per_identity=args.min_per_identity,
         seed=args.seed,
     )
-    output_path = second_cleaning_output_path(args.image_path)
     np.save(output_path, grouped_list)
     written_images = int(grouped_list.size)
 
     print(f"Second cleaning finished: {passed_images:,} images passed.")
     print(f"Created list with {written_images:,} images: {output_path}")
+    if grouped_list.shape[0] > 0:
+        print(f"First row: {grouped_list[0].tolist()}")
+        print(f"Last row: {grouped_list[-1].tolist()}")
+    else:
+        print("First row: <empty>")
+        print("Last row: <empty>")
 
 
 if __name__ == "__main__":

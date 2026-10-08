@@ -65,6 +65,7 @@ cfg.dataset.image_size = 224
 cfg.dataset.scale_min = 1.4
 cfg.dataset.scale_max = 1.8
 cfg.dataset.trans_scale = 0.
+cfg.dataset.gradient_accumulation_steps = 1
 
 # ---------------------------------------------------------------------------- #
 # Options for training

@@ -258,7 +258,8 @@ def main() -> None:
     mappings = [
         (
             image_path,
-            output_path_for(image_path, input_root, output_root),
+            output_path_for(
+                image_path, input_root, output_root),
         )
         for image_path in image_paths
     ]

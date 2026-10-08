@@ -10,7 +10,7 @@
 # 
 # 
 # '''
-output_dir: "TUL/pretrain-FINAL"
+output_dir: "/mnt/d/datasets/pretrain-FINAL-mp"
 pretrained_modelpath: ""
 dataset:
   training_data: ['vggface2', "vggface2hq", "ethnicity", "vox2"]
