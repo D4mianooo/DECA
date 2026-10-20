@@ -1,3 +1,5 @@
+import os
+
 import torch.nn as nn
 import numpy as np
 import torch
@@ -657,19 +659,16 @@ class VGGLoss(nn.Module):
 ## ref: https://github.com/cydonia999/VGGFace2-pytorch
 from ..models.frnet import resnet50, load_state_dict
 class VGGFace2Loss(nn.Module):
-    def __init__(self, pretrained_model, pretrained_data='vggface2'):
+    def __init__(self, pretrained_model):
         super(VGGFace2Loss, self).__init__()
         self.reg_model = resnet50(num_classes=8631, include_top=False).eval().cuda()
         load_state_dict(self.reg_model, pretrained_model)
         self.mean_bgr = torch.tensor([91.4953, 103.8827, 131.0912]).cuda()
 
     def reg_features(self, x):
-        # out = []
         margin=10
         x = x[:,:,margin:224-margin,margin:224-margin]
-        # x = F.interpolate(x*2. - 1., [224,224], mode='nearest')
         x = F.interpolate(x*2. - 1., [224,224], mode='bilinear')
-        # import ipdb; ipdb.set_trace()
         feature = self.reg_model(x)
         feature = feature.view(x.size(0), -1)
         return feature
@@ -693,48 +692,69 @@ class VGGFace2Loss(nn.Module):
         loss = self._cos_metric(gen_out, tar_out).mean()
         return loss
 
-class ArcFaceLose(nn.Module):
-    def __init__(self, model_name="arcface_r50"):
-        super(ArcFaceLose, self).__init__()
-        self.rec_model = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-        self.rec_model.prepare(ctx_id=0, det_size=(224, 224))
+class ArcFaceLoss(nn.Module):
+    """
+    Differentiable ArcFace Identity Loss.
 
-        if self.rec_model is None:
-            raise RuntimeError(f"InsightFace model '{model_name}' is None. "
-                               "Check InsightFace installation and model name.")
+    Args:
+        model_path (str): Path to local pretrained .pth backbone weights.
+        network (str): Backbone architecture name ('iresnet50' or 'iresnet100').
+        device (str): Device to place the backbone on ('cuda' or 'cpu').
+    """
+    def __init__(
+        self,
+        model_path='data/glink360k_cosface_r100_fp16_0.1.pth',
+        network='iresnet100',
+        device='cuda'
+    ):
+        super(ArcFaceLoss, self).__init__()
+        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
 
-    def transform(self, img):
-        img = img.detach().clamp(0, 1)              # FaceAnalysis is non-differentiable
-        img = (img * 255).to(torch.uint8)           # uint8 [0, 255]
-        img = img.permute(0, 2, 3, 1)               # [B, H, W, C], still RGB
-        img = img[..., [2, 1, 0]]                   # RGB -> BGR
-        return img.cpu().numpy()                  # NumPy [B, H, W, C]
+        from ..models import iresnet
+        if not hasattr(iresnet, network):
+            raise ValueError(f"Unknown network architecture: {network}")
+        model_fn = getattr(iresnet, network)
+        self.backbone = model_fn().to(self.device)
 
-    def _cos_metric(self, generated_images, target_images):
-        losses = []
-        for index, (generated_image, target_image) in enumerate(
-                zip(generated_images, target_images)):
-            generated_faces = self.rec_model.get(generated_image)
-            target_faces = self.rec_model.get(target_image)
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model path not found: {model_path}")
 
-            if not generated_faces or not target_faces:
-                # A pair without two detected faces cannot have an ArcFace
-                # identity distance.  Skip it instead of indexing faces[0].
-                continue
+        state_dict = torch.load(model_path, map_location=self.device)
+        if 'state_dict' in state_dict:
+            state_dict = state_dict['state_dict']
+        self.backbone.load_state_dict(state_dict)
 
-            generated_embedding = torch.from_numpy(generated_faces[0].embedding).float()
-            target_embedding = torch.from_numpy(target_faces[0].embedding).float()
-            losses.append(1.0 - F.cosine_similarity(
-                generated_embedding.unsqueeze(0),
-                target_embedding.unsqueeze(0), dim=1))
+        self.backbone.eval()
+        for param in self.backbone.parameters():
+            param.requires_grad = False
 
-        if  losses:
-            return torch.cat(losses).mean()
-
-        print("No faces detected.  Returning 0.")
-        return 0
+    def transform(self, x):
+        """
+        Prepares images for ArcFace backbone:
+        - Resizes to [112, 112] using bilinear interpolation.
+        - Scales and shifts from [0, 1] to [-1, 1].
+        """
+        if x.shape[-2:] != (112, 112):
+            x = F.interpolate(x, size=(112, 112), mode='bilinear', align_corners=False)
+        x = (x - 0.5) / 0.5
+        return x
 
     def forward(self, gen, tar):
+        """
+        Computes cosine distance between generated and target identity embeddings.
+
+        Args:
+            gen (torch.Tensor): Generated image batch [B, 3, H, W] in range [0, 1].
+            tar (torch.Tensor): Target image batch [B, 3, H, W] in range [0, 1].
+
+        Returns:
+            torch.Tensor: Scalar cosine similarity loss.
+        """
         gen = self.transform(gen)
         tar = self.transform(tar)
-        return self._cos_metric(gen, tar)
+
+        gen_feat = F.normalize(self.backbone(gen), dim=-1, p=2)
+        tar_feat = F.normalize(self.backbone(tar), dim=-1, p=2)
+
+        loss = 1.0 - (gen_feat * tar_feat).sum(dim=1).mean()
+        return loss
