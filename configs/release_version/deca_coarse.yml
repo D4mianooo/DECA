@@ -6,7 +6,7 @@
 # Time:
 # around 15min/1000iterations
 # in total, needs around 
-output_dir: "/mnt/d/datasets/coarse-FINAL-mp"
+output_dir: "/mnt/e/coarse-FINAL-emocaloss"
 pretrained_modelpath: "/mnt/d/datasets/pretrain-FINAL-mp/model.tar"
 dataset:
   training_data: ['vggface2', "vggface2hq", "ethnicity", "vox2"]

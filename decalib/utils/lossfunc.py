@@ -758,3 +758,114 @@ class ArcFaceLoss(nn.Module):
 
         loss = 1.0 - (gen_feat * tar_feat).sum(dim=1).mean()
         return loss
+
+
+class EmotionConsistencyLoss(nn.Module):
+    """
+    Emotion Consistency Loss (L_emo) from the EMOCA paper (Daněček et al., CVPR 2022).
+    Paper: "EMOCA: Emotion Driven Monocular Face Capture and Animation"
+    https://download.is.tue.mpg.de/emoca/EMOCA__CVPR22.pdf
+
+    The emotion consistency loss computes the perceptual feature distance d(epsilon_gen, epsilon_tar)
+    between the input face image and the rendered 3D face mesh using an emotion recognition network
+    (ResNet-50 feature extractor trained on facial expression/affect datasets such as AffectNet).
+
+    Args:
+        model_path (str, optional): Path to pretrained ResNet-50 emotion recognition checkpoint.
+        metric (str): Distance metric to use ('cosine', 'mse', 'l2', or 'l1').
+                      Default: 'cosine' (range [0, 2], matching standard DECA perceptual/identity loss scales).
+                      'mse' computes mean squared error across feature dimensions.
+                      'l2' computes sum over channels (squared Euclidean norm).
+        device (str): Device to place the network on ('cuda' or 'cpu').
+        normalize_features (bool): Whether to L2-normalize feature representations. Default: True.
+    """
+    def __init__(
+        self,
+        model_path="data/emonet_8.pth",
+        metric='l2',
+        device='cuda',
+        normalize_features=True
+    ):
+        super(EmotionConsistencyLoss, self).__init__()
+        self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
+        self.metric = metric.lower()
+        self.normalize_features = normalize_features
+
+        from ..models.resnet import ResNet, Bottleneck
+        self.backbone = ResNet(Bottleneck, [3, 4, 6, 3]).to(self.device)
+
+        if model_path is not None and os.path.exists(model_path):
+            state_dict = torch.load(model_path, map_location=self.device)
+            if 'state_dict' in state_dict:
+                state_dict = state_dict['state_dict']
+            elif 'model_state_dict' in state_dict:
+                state_dict = state_dict['model_state_dict']
+            elif 'model' in state_dict:
+                state_dict = state_dict['model']
+
+            # Strip possible module./backbone. prefixes if present
+            cleaned_state_dict = {}
+            for k, v in state_dict.items():
+                k_clean = k.replace('module.', '').replace('backbone.', '')
+                cleaned_state_dict[k_clean] = v
+
+            missing, unexpected = self.backbone.load_state_dict(cleaned_state_dict, strict=False)
+            if len(unexpected) > 0 or len(missing) > 0:
+                print(f"[EmotionConsistencyLoss] Loaded weights with {len(missing)} missing and {len(unexpected)} unexpected keys.")
+
+        self.backbone.eval()
+        for param in self.backbone.parameters():
+            param.requires_grad = False
+
+        # ImageNet / standard normalization constants for pretrained ResNet50
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(self.device))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(self.device))
+
+    def transform(self, x):
+        """
+        Prepares images for ResNet50 emotion backbone:
+        - Ensures spatial dimensions are (224, 224) via bilinear interpolation.
+        - Normalizes RGB images [0, 1] using standard ImageNet mean and std.
+        """
+        if x.shape[-2:] != (224, 224):
+            x = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        x = (x - self.mean) / self.std
+        return x
+
+    def forward(self, gen, tar):
+        """
+        Computes emotion feature consistency distance between generated and target facial images.
+
+        Args:
+            gen (torch.Tensor): Generated/rendered image batch [B, 3, H, W] in range [0, 1].
+            tar (torch.Tensor): Target/input face image batch [B, 3, H, W] in range [0, 1].
+
+        Returns:
+            torch.Tensor: Scalar emotion consistency loss.
+        """
+        gen = self.transform(gen)
+        tar = self.transform(tar)
+
+        gen_feat = self.backbone(gen)
+        tar_feat = self.backbone(tar)
+
+        if self.normalize_features:
+            gen_feat = F.normalize(gen_feat, p=2, dim=1)
+            tar_feat = F.normalize(tar_feat, p=2, dim=1)
+
+        if self.metric == 'cosine':
+            # Cosine distance: 1 - cos_sim, range [0, 2], scale ~ 0.05 - 0.3 (analogous to ID loss)
+            loss = (1.0 - F.cosine_similarity(gen_feat, tar_feat, dim=1)).mean()
+        elif self.metric == 'mse':
+            # Mean squared error across 2048 feature dimensions
+            loss = ((gen_feat - tar_feat) ** 2).mean()
+        elif self.metric == 'l2':
+            # Sum over channels (unscaled squared L2 norm)
+            loss = ((gen_feat - tar_feat) ** 2).sum(dim=1).mean()
+        elif self.metric == 'l1':
+            loss = torch.abs(gen_feat - tar_feat).sum(dim=1).mean()
+        else:
+            raise ValueError(f"Unknown metric '{self.metric}'. Choose from 'cosine', 'mse', 'l2', or 'l1'.")
+
+        return loss
+

@@ -63,8 +63,6 @@ class Trainer(object):
         self.configure_optimizers()
         self.load_checkpoint()
 
-        # initialize loss
-        # # initialize loss
         if self.train_detail:
             print("[INFO] <TRAINER> Train detail")
             self.mrf_loss = lossfunc.IDMRFLoss()
@@ -72,7 +70,8 @@ class Trainer(object):
         else:
             print("[INFO] <TRAINER> Identity loss")
             self.id_loss = lossfunc.VGGFace2Loss(pretrained_model=self.cfg.model.fr_model_path)
-            #self.id_loss = lossfunc.ArcFaceLose()
+            #self.id_loss = lossfunc.ArcFaceLoss()
+        self.emo_loss = lossfunc.EmotionConsistencyLoss()
         logger.add(os.path.join(self.cfg.output_dir, self.cfg.train.log_dir, 'train.log'))
         if self.cfg.train.write_summary:
             from torch.utils.tensorboard import SummaryWriter
@@ -120,6 +119,7 @@ class Trainer(object):
             self.deca.train()
         if self.train_detail:
             self.deca.E_flame.eval()
+
         # [B, K, 3, size, size] ==> [BxK, 3, size, size]
         images = batch['image'].to(self.device); images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1]) 
         lmk = batch['landmark'].to(self.device); lmk = lmk.view(-1, lmk.shape[-2], lmk.shape[-1])
@@ -127,16 +127,8 @@ class Trainer(object):
 
         #-- encoder
         codedict = self.deca.encode(images, use_detail=self.train_detail)
-        
-        ### shape constraints for coarse model
-        ### detail consistency for detail model
-        # import ipdb; ipdb.set_trace()
+
         if self.cfg.loss.shape_consistency or self.cfg.loss.detail_consistency:
-            '''
-            make sure s0, s1 is something to make shape close
-            the difference from ||so - s1|| is 
-            the later encourage s0, s1 is cloase in l2 space, but not really ensure shape will be close
-            '''
             new_order = np.array([np.random.permutation(self.K) + i*self.K for i in range(self.batch_size)])
             new_order = new_order.flatten()
             shapecode = codedict['shape']
@@ -195,11 +187,14 @@ class Trainer(object):
                     masks = mask_face_eye*opdict['alpha_images']
                 losses['photometric_texture'] = (masks*(predicted_images - images).abs()).mean()*self.cfg.loss.photo
 
-            if self.cfg.loss.id > 0.:
+            if self.cfg.loss.id > 0. or self.cfg.loss.emo > 0.:
                 shading_images = self.deca.render.add_SHlight(opdict['normal_images'], codedict['light'].detach())
                 albedo_images = F.grid_sample(opdict['albedo'].detach(), opdict['grid'], align_corners=False)
                 overlay = albedo_images*shading_images*mask_face_eye + images*(1-mask_face_eye)
-                losses['identity'] = self.id_loss(overlay, images) * self.cfg.loss.id
+                if self.cfg.loss.id > 0.:
+                    losses['identity'] = self.id_loss(overlay, images) * self.cfg.loss.id
+                if self.cfg.loss.emo > 0.:
+                    losses['emotion'] = self.emo_loss(overlay, images) * self.cfg.loss.emo
             
             losses['shape_reg'] = (torch.sum(codedict['shape']**2)/2)*self.cfg.loss.reg_shape
             losses['expression_reg'] = (torch.sum(codedict['exp']**2)/2)*self.cfg.loss.reg_exp
@@ -310,7 +305,6 @@ class Trainer(object):
             self.val_iter = iter(self.val_dataloader)
             batch = next(self.val_iter)
         with torch.no_grad():
-            #val_losses, _ = self.training_step(batch, batch_nb=0, is_validation=True)
             images = batch['image'].to(self.device); images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1])
             images = images.view(-1, images.shape[-3], images.shape[-2], images.shape[-1])
             codedict = self.deca.encode(images)

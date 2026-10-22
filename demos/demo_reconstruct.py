@@ -30,16 +30,11 @@ from decalib.utils.config import cfg as deca_cfg
 from decalib.utils.tensor_cropper import transform_points
 
 def main(args):
-    # if args.rasterizer_type != 'standard':
-    #     args.render_orig = False
     savefolder = args.savefolder
     device = args.device
     os.makedirs(savefolder, exist_ok=True)
-
-    # load test images 
     testdata = datasets.TestData(args.inputpath, iscrop=args.iscrop, face_detector=args.detector, sample_step=args.sample_step)
 
-    # run DECA
     deca_cfg.model.use_tex = args.useTex
     deca_cfg.rasterizer_type = args.rasterizer_type
     deca_cfg.model.extract_tex = args.extractTex
