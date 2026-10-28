@@ -113,7 +113,6 @@ cfg.loss.photo_D = 2.
 cfg.loss.reg_sym = 0.005
 cfg.loss.reg_z = 0.005
 cfg.loss.reg_diff = 0.005
-cfg.loss.emo = 1.0
 
 def get_cfg_defaults():
     """Get a yacs CfgNode object with default values for my_project."""

@@ -69,9 +69,8 @@ class Trainer(object):
             self.face_attr_mask = util.load_local_mask(image_size=self.cfg.model.uv_size, mode='bbx')
         else:
             print("[INFO] <TRAINER> Identity loss")
-            self.id_loss = lossfunc.VGGFace2Loss(pretrained_model=self.cfg.model.fr_model_path)
-            #self.id_loss = lossfunc.ArcFaceLoss()
-        self.emo_loss = lossfunc.EmotionConsistencyLoss()
+            #self.id_loss = lossfunc.VGGFace2Loss(pretrained_model=self.cfg.model.fr_model_path)
+            self.id_loss = lossfunc.ArcFaceLoss()
         logger.add(os.path.join(self.cfg.output_dir, self.cfg.train.log_dir, 'train.log'))
         if self.cfg.train.write_summary:
             from torch.utils.tensorboard import SummaryWriter
@@ -187,15 +186,13 @@ class Trainer(object):
                     masks = mask_face_eye*opdict['alpha_images']
                 losses['photometric_texture'] = (masks*(predicted_images - images).abs()).mean()*self.cfg.loss.photo
 
-            if self.cfg.loss.id > 0. or self.cfg.loss.emo > 0.:
+            if self.cfg.loss.id > 0.:
                 shading_images = self.deca.render.add_SHlight(opdict['normal_images'], codedict['light'].detach())
                 albedo_images = F.grid_sample(opdict['albedo'].detach(), opdict['grid'], align_corners=False)
                 overlay = albedo_images*shading_images*mask_face_eye + images*(1-mask_face_eye)
                 if self.cfg.loss.id > 0.:
                     losses['identity'] = self.id_loss(overlay, images) * self.cfg.loss.id
-                if self.cfg.loss.emo > 0.:
-                    losses['emotion'] = self.emo_loss(overlay, images) * self.cfg.loss.emo
-            
+
             losses['shape_reg'] = (torch.sum(codedict['shape']**2)/2)*self.cfg.loss.reg_shape
             losses['expression_reg'] = (torch.sum(codedict['exp']**2)/2)*self.cfg.loss.reg_exp
             losses['tex_reg'] = (torch.sum(codedict['tex']**2)/2)*self.cfg.loss.reg_tex

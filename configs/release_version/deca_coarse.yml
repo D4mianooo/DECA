@@ -6,7 +6,7 @@
 # Time:
 # around 15min/1000iterations
 # in total, needs around 
-output_dir: "/mnt/e/coarse-FINAL-emocaloss"
+output_dir: "/mnt/e/coarse-FINAL-ms1mv3"
 pretrained_modelpath: "/mnt/d/datasets/pretrain-FINAL-mp/model.tar"
 dataset:
   training_data: ['vggface2', "vggface2hq", "ethnicity", "vox2"]
@@ -23,5 +23,4 @@ train:
   checkpoint_steps: 1000
   val_steps: 500
   eval_steps: 1000
-
 # python main_train_deca_release.py --cfg configs/release_version/deca_coarse.yml
