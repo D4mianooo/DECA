@@ -10,10 +10,10 @@
 # 
 # 
 # '''
-output_dir: "/mnt/d/datasets/pretrain-FINAL-mp"
+output_dir: "/mnt/d/datasets/testowanie"
 pretrained_modelpath: ""
 dataset:
-  training_data: ['vggface2', "vggface2hq", "ethnicity", "vox2"]
+  training_data: ['vggface2', "vggface2hq", "ethnicity"]
   eval_data: ['vggface2']
   batch_size: 8
   gradient_accumulation_steps: 8
@@ -26,6 +26,7 @@ loss:
   reg_light: 0.
   shape_consistency: False
 train:
+
   resume: True
   max_epochs: 2
   max_steps: 100000
@@ -33,4 +34,4 @@ train:
   vis_steps: 500
   checkpoint_steps: 1000
   val_steps: 500
-  eval_steps: 1000
+  eval_steps: 100000

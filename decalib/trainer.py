@@ -69,8 +69,8 @@ class Trainer(object):
             self.face_attr_mask = util.load_local_mask(image_size=self.cfg.model.uv_size, mode='bbx')
         else:
             print("[INFO] <TRAINER> Identity loss")
-            #self.id_loss = lossfunc.VGGFace2Loss(pretrained_model=self.cfg.model.fr_model_path)
-            self.id_loss = lossfunc.ArcFaceLoss()
+            self.id_loss = lossfunc.VGGFace2Loss(pretrained_model=self.cfg.model.fr_model_path)
+            #self.id_loss = lossfunc.ArcFaceLoss()
         logger.add(os.path.join(self.cfg.output_dir, self.cfg.train.log_dir, 'train.log'))
         if self.cfg.train.write_summary:
             from torch.utils.tensorboard import SummaryWriter
@@ -322,19 +322,16 @@ class Trainer(object):
         self.deca.train()
 
     def evaluate(self):
-        ''' NOW validation 
-        '''
         os.makedirs(os.path.join(self.cfg.output_dir, 'NOW_validation'), exist_ok=True)
         savefolder = os.path.join(self.cfg.output_dir, 'NOW_validation', f'step_{self.global_step:08}') 
         os.makedirs(savefolder, exist_ok=True)
+
         self.deca.eval()
-        # run now validation images
+
         from .datasets.now import NoWDataset
         dataset = NoWDataset(scale=(self.cfg.dataset.scale_min + self.cfg.dataset.scale_max)/2)
-        dataloader = DataLoader(dataset, batch_size=8, shuffle=False,
-                            num_workers=8,
-                            pin_memory=True,
-                            drop_last=False)
+        dataloader = DataLoader(dataset, batch_size=8, shuffle=False, num_workers=8, pin_memory=True, drop_last=False)
+
         faces = self.deca.flame.faces_tensor.cpu().numpy()
         for i, batch in enumerate(tqdm(dataloader, desc='now evaluation ')):
             images = batch['image'].to(self.device)
@@ -345,29 +342,41 @@ class Trainer(object):
                 codedict['exp'][:] = 0.
                 codedict['pose'][:] = 0.
                 opdict, _ = self.deca.decode(codedict)
-            #-- save results for evaluation
             verts = opdict['verts'].cpu().numpy()
             landmark_51 = opdict['landmarks3d_world'][:, 17:]
             landmark_7 = landmark_51[:,[19, 22, 25, 28, 16, 31, 37]]
             landmark_7 = landmark_7.cpu().numpy()
             for k in range(images.shape[0]):
                 os.makedirs(os.path.join(savefolder, imagename[k]), exist_ok=True)
-                # save mesh
                 util.write_obj(os.path.join(savefolder, f'{imagename[k]}.obj'), vertices=verts[k], faces=faces)
-                # save 7 landmarks for alignment
+                txt_path = os.path.join(savefolder, f'{imagename[k]}.txt')
+                with open(txt_path, 'w', encoding='utf-8') as f_txt:
+                    for pt in landmark_7[k]:
+                        f_txt.write(f'{pt[0]:.18e} {pt[1]:.18e} {pt[2]:.18e}\n')
                 np.save(os.path.join(savefolder, f'{imagename[k]}.npy'), landmark_7[k])
                 for vis_name in visdict.keys(): #['inputs', 'landmarks2d', 'shape_images']:
                     if vis_name not in visdict.keys():
                         continue
-                    # import ipdb; ipdb.set_trace()
                     image = util.tensor2image(visdict[vis_name][k])
                     name = imagename[k].split('/')[-1]
-                    # print(os.path.join(savefolder, imagename[k], name + '_' + vis_name +'.jpg'))
                     cv2.imwrite(os.path.join(savefolder, imagename[k], name + '_' + vis_name +'.jpg'), image)
-            # visualize results to check
+
             util.visualize_grid(visdict, os.path.join(savefolder, f'{i}.jpg'))
 
-        ## then please run main.py in https://github.com/soubhiksanyal/now_evaluation, it will take around 30min to get the metric results
+        try:
+            import evaluate_now
+            now_dataset_path = os.path.join(self.cfg.deca_dir, 'datasets', 'NoW')
+            now_root_abs, _ = evaluate_now.resolve_now_paths(now_dataset_path)
+            logger.info(f'[EVAL] Running Docker container noweval on {savefolder}...')
+            evaluate_now.run_docker_evaluation(dataset_abs=now_root_abs, model_output_abs=savefolder)
+            mean_err, median_err = evaluate_now.extract_metrics(savefolder)
+            logger.info(f'[EVAL] Step: {self.global_step} -> NoW Mean: {mean_err:.4f} mm, Median: {median_err:.4f} mm')
+            if self.cfg.train.write_summary:
+                self.writer.add_scalar('now_eval/mean_error_mm', mean_err, global_step=self.global_step)
+                self.writer.add_scalar('now_eval/median_error_mm', median_err, global_step=self.global_step)
+        except Exception as e:
+            logger.warning(f'[EVAL] Docker evaluation failed or skipped: {e}')
+
         self.deca.train()
 
     def prepare_data(self):
@@ -448,13 +457,23 @@ class Trainer(object):
                 if self.global_step % self.cfg.train.val_steps == 0:
                     self.validation_step()
                 
-                # if self.global_step % self.cfg.train.eval_steps == 0:
-                #     self.evaluate()
+                if self.global_step>0 and self.global_step % self.cfg.train.eval_steps == 0:
+                    print(self.cfg.train.eval_steps)
+                    self.evaluate()
 
                 all_loss = losses['all_loss']
-                if step % self.cfg.dataset.gradient_accumulation_steps == 0:
-                    self.opt.zero_grad(); all_loss.backward(); self.opt.step()
-
-                self.global_step += 1
+                grad_accum_steps = self.cfg.dataset.gradient_accumulation_steps
+                if grad_accum_steps > 1:
+                    scaled_loss = all_loss / grad_accum_steps
+                    scaled_loss.backward()
+                    if (step + 1) % grad_accum_steps == 0:
+                        self.opt.step()
+                        self.opt.zero_grad()
+                        self.global_step += 1
+                else:
+                    self.opt.zero_grad()
+                    all_loss.backward()
+                    self.opt.step()
+                    self.global_step += 1
                 if self.global_step > self.cfg.train.max_steps:
                     break
