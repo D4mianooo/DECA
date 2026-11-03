@@ -411,58 +411,9 @@ class Trainer(object):
                     self.train_iter = iter(self.train_dataloader)
                     batch = next(self.train_iter)
                 losses, opdict = self.training_step(batch, step)
-                if self.global_step % self.cfg.train.log_steps == 0:
-                    loss_info = f"ExpName: {self.cfg.exp_name} \nEpoch: {epoch}, Iter: {step}/{iters_every_epoch}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} \n"
-                    for k, v in losses.items():
-                        loss_info = loss_info + f'{k}: {v:.4f}, '
-                        if self.cfg.train.write_summary:
-                            self.writer.add_scalar('train_loss/'+k, v, global_step=self.global_step)                    
-                    logger.info(loss_info)
-
-                if self.global_step % self.cfg.train.vis_steps == 0:
-                    current_bs = opdict['verts'].shape[0]
-                    n_vis = min(8, current_bs)
-                    if n_vis > 0:
-                        visind = list(range(n_vis))
-                        shape_images = self.deca.render.render_shape(
-                            opdict['verts'][visind],
-                            opdict['trans_verts'][visind]
-                        )
-                        visdict = {
-                            'inputs': opdict['images'][visind], 
-                            'landmarks2d_gt': util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind], isScale=True),
-                            'landmarks2d': util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind], isScale=True),
-                            'shape_images': shape_images,
-                        }
-                        if 'predicted_images' in opdict.keys():
-                            visdict['predicted_images'] = opdict['predicted_images'][visind]
-                        if 'predicted_detail_images' in opdict.keys():
-                            visdict['predicted_detail_images'] = opdict['predicted_detail_images'][visind]
-
-                        savepath = os.path.join(self.cfg.output_dir, self.cfg.train.vis_dir, f'{self.global_step:06}.jpg')
-                        grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
-                        self.writer.add_image('train_images', (grid_image/255.).astype(np.float32).transpose(2,0,1), self.global_step)
-
-                if self.global_step>0 and self.global_step % self.cfg.train.checkpoint_steps == 0:
-                    model_dict = self.deca.model_dict()
-                    model_dict['opt'] = self.opt.state_dict()
-                    model_dict['global_step'] = self.global_step
-                    model_dict['batch_size'] = self.batch_size
-                    torch.save(model_dict, os.path.join(self.cfg.output_dir, 'model' + '.tar'))   
-                    # 
-                    if self.global_step % self.cfg.train.checkpoint_steps*10 == 0:
-                        os.makedirs(os.path.join(self.cfg.output_dir, 'models'), exist_ok=True)
-                        torch.save(model_dict, os.path.join(self.cfg.output_dir, 'models', f'{self.global_step:08}.tar'))   
-
-                if self.global_step % self.cfg.train.val_steps == 0:
-                    self.validation_step()
-                
-                if self.global_step>0 and self.global_step % self.cfg.train.eval_steps == 0:
-                    print(self.cfg.train.eval_steps)
-                    self.evaluate()
-
                 all_loss = losses['all_loss']
                 grad_accum_steps = self.cfg.dataset.gradient_accumulation_steps
+                step_updated = False
                 if grad_accum_steps > 1:
                     scaled_loss = all_loss / grad_accum_steps
                     scaled_loss.backward()
@@ -470,10 +421,61 @@ class Trainer(object):
                         self.opt.step()
                         self.opt.zero_grad()
                         self.global_step += 1
+                        step_updated = True
                 else:
                     self.opt.zero_grad()
                     all_loss.backward()
                     self.opt.step()
                     self.global_step += 1
+                    step_updated = True
+
+                if step_updated:
+                    if self.global_step % self.cfg.train.log_steps == 0:
+                        loss_info = f"ExpName: {self.cfg.exp_name} \nEpoch: {epoch}, Iter: {step}/{iters_every_epoch}, Time: {datetime.now().strftime('%Y-%m-%d-%H:%M:%S')} \n"
+                        for k, v in losses.items():
+                            loss_info = loss_info + f'{k}: {v:.4f}, '
+                            if self.cfg.train.write_summary:
+                                self.writer.add_scalar('train_loss/'+k, v, global_step=self.global_step)                    
+                        logger.info(loss_info)
+
+                    if self.global_step % self.cfg.train.vis_steps == 0:
+                        current_bs = opdict['verts'].shape[0]
+                        n_vis = min(8, current_bs)
+                        if n_vis > 0:
+                            visind = list(range(n_vis))
+                            shape_images = self.deca.render.render_shape(
+                                opdict['verts'][visind],
+                                opdict['trans_verts'][visind]
+                            )
+                            visdict = {
+                                'inputs': opdict['images'][visind], 
+                                'landmarks2d_gt': util.tensor_vis_landmarks(opdict['images'][visind], opdict['lmk'][visind], isScale=True),
+                                'landmarks2d': util.tensor_vis_landmarks(opdict['images'][visind], opdict['landmarks2d'][visind], isScale=True),
+                                'shape_images': shape_images,
+                            }
+                            if 'predicted_images' in opdict.keys():
+                                visdict['predicted_images'] = opdict['predicted_images'][visind]
+                            if 'predicted_detail_images' in opdict.keys():
+                                visdict['predicted_detail_images'] = opdict['predicted_detail_images'][visind]
+
+                            savepath = os.path.join(self.cfg.output_dir, self.cfg.train.vis_dir, f'{self.global_step:06}.jpg')
+                            grid_image = util.visualize_grid(visdict, savepath, return_gird=True)
+                            self.writer.add_image('train_images', (grid_image/255.).astype(np.float32).transpose(2,0,1), self.global_step)
+
+                    if self.global_step > 0 and self.global_step % self.cfg.train.checkpoint_steps == 0:
+                        model_dict = self.deca.model_dict()
+                        model_dict['opt'] = self.opt.state_dict()
+                        model_dict['global_step'] = self.global_step
+                        model_dict['batch_size'] = self.batch_size
+                        torch.save(model_dict, os.path.join(self.cfg.output_dir, 'model' + '.tar'))   
+                        os.makedirs(os.path.join(self.cfg.output_dir, 'models'), exist_ok=True)
+                        torch.save(model_dict, os.path.join(self.cfg.output_dir, 'models', f'{self.global_step:08}.tar'))   
+
+                    if self.global_step % self.cfg.train.val_steps == 0:
+                        self.validation_step()
+                    
+                    if self.global_step > 0 and self.global_step % self.cfg.train.eval_steps == 0:
+                        print(self.cfg.train.eval_steps)
+                        self.evaluate()
                 if self.global_step > self.cfg.train.max_steps:
                     break
