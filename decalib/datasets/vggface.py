@@ -16,17 +16,17 @@ class VGGFace2Dataset(Dataset):
         '''
         self.K = K
         self.image_size = image_size
-        self.imagefolder = './datasets/VGGFACE2/train'
-        self.kptfolder = './datasets/VGGFACE2/train_annotated_fan'
-        self.segfolder = './datasets/VGGFACE2/train_seg'
+        self.imagefolder = '/content/drive/MyDrive/DECAdatasets/VGGFACE2/train'
+        self.kptfolder = '/content/drive/MyDrive/DECAdatasets/VGGFACE2/train_annotated_fan'
+        self.segfolder = '/content/drive/MyDrive/DECAdatasets/VGGFACE2/train_seg'
         # hq:
         # datafile = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_cleaning_codes/ringnetpp_training_lists/second_cleaning/vggface2_bbx_size_bigger_than_400_train_list_max_normal_100_ring_5_1_serial.npy'
-        datafile = './datasets/VGGFACE2/train_second_cleaning.npy'
+        datafile = '/content/drive/MyDrive/DECAdatasets/VGGFACE2/train_second_cleaning.npy'
         if isEval:
-            self.imagefolder = './datasets/VGGFACE2/eval'
-            self.kptfolder = './datasets/VGGFACE2/eval_annotated_fan'
-            self.segfolder = './datasets/VGGFACE2/eval_seg'
-            datafile = './datasets/VGGFACE2/eval_second_cleaning.npy'
+            self.imagefolder = '/content/drive/MyDrive/DECAdatasets/VGGFACE2/eval'
+            self.kptfolder = '/content/drive/MyDrive/DECAdatasets/VGGFACE2/eval_annotated_fan'
+            self.segfolder = '/content/drive/MyDrive/DECAdatasets/VGGFACE2/eval_seg'
+            datafile = '/content/drive/MyDrive/DECAdatasets/VGGFACE2/eval_second_cleaning.npy'
         self.data_lines = np.load(datafile).astype('str')
 
         self.isTemporal = isTemporal
@@ -146,12 +146,12 @@ class VGGFace2HQDataset(Dataset):
         '''
         self.K = K
         self.image_size = image_size
-        self.imagefolder = './datasets/VGGFACE2_HQ/train'
-        self.kptfolder = '/mnt/d/datasets/VGGFACE2_HQ/train_annotated_fan/'
-        self.segfolder = '/mnt/d/datasets/VGGFACE2_HQ/train_seg/'
+        self.imagefolder = '/content/drive/MyDrive/DECAdatasets/VGGFACE2_HQ/train'
+        self.kptfolder = '/content/drive/MyDrive/DECAdatasets/VGGFACE2_HQ/train_annotated_fan/'
+        self.segfolder = '/content/drive/MyDrive/DECAdatasets/VGGFACE2_HQ/train_seg/'
         # hq:
         # datafile = '/ps/scratch/face2d3d/texture_in_the_wild_code/VGGFace2_cleaning_codes/ringnetpp_training_lists/second_cleaning/vggface2_bbx_size_bigger_than_400_train_list_max_normal_100_ring_5_1_serial.npy'
-        datafile = './datasets/VGGFACE2_HQ/train_second_cleaning.npy'
+        datafile = '/content/drive/MyDrive/DECAdatasets/VGGFACE2_HQ/train_second_cleaning.npy'
         self.data_lines = np.load(datafile).astype('str')
 
         self.isTemporal = isTemporal

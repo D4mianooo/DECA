@@ -10,13 +10,13 @@
 # 
 # 
 # '''
-output_dir: "/mnt/d/datasets/debug-usun"
+output_dir: "/content/drive/MyDrive/DECAdatasets/trainings/pretrain"
 pretrained_modelpath: ""
 dataset:
   training_data: ['vggface2', "vggface2hq", "ethnicity"]
   eval_data: ['vggface2']
-  batch_size: 8
-  gradient_accumulation_steps: 8
+  batch_size: 64
+  gradient_accumulation_steps: 1
   K: 1
 loss:
   photo: 0.
@@ -28,9 +28,9 @@ loss:
 train:
   resume: True
   max_epochs: 2
-  max_steps: 2
-  log_steps: 1
+  max_steps: 100000
+  log_steps: 10
   vis_steps: 500
-  checkpoint_steps: 2
+  checkpoint_steps: 1000
   val_steps: 500
   eval_steps: 100000
