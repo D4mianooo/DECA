@@ -10,7 +10,7 @@
 # 
 # 
 # '''
-output_dir: "/mnt/d/datasets/testowanie"
+output_dir: "/mnt/d/datasets/debug-usun"
 pretrained_modelpath: ""
 dataset:
   training_data: ['vggface2', "vggface2hq", "ethnicity"]
@@ -26,12 +26,11 @@ loss:
   reg_light: 0.
   shape_consistency: False
 train:
-
   resume: True
   max_epochs: 2
-  max_steps: 100000
-  log_steps: 10
+  max_steps: 2
+  log_steps: 1
   vis_steps: 500
-  checkpoint_steps: 1000
+  checkpoint_steps: 2
   val_steps: 500
   eval_steps: 100000

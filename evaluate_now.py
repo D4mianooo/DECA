@@ -166,14 +166,24 @@ def run_docker_evaluation(dataset_abs: str, model_output_abs: str, custom_docker
         raise
 
 
-def evaluation_results_exist(model_output_dir: str) -> bool:
+def find_distance_npy_files(model_output_dir: str) -> List[str]:
     """
-    Checks if evaluation metric files (.npy or .meanmedian) already exist inside model_output_dir.
+    Finds NoW evaluation metric .npy files (e.g. RECON_computed_distances.npy),
+    excluding per-image landmark .npy files (such as IMG_0053.npy).
     """
     model_output_abs = os.path.abspath(model_output_dir)
-    npy_files = glob.glob(os.path.join(model_output_abs, "**", "*.npy"), recursive=True)
+    all_npy = glob.glob(os.path.join(model_output_abs, "**", "*.npy"), recursive=True)
+    return [f for f in all_npy if "distance" in os.path.basename(f).lower()]
+
+
+def evaluation_results_exist(model_output_dir: str) -> bool:
+    """
+    Checks if evaluation metric files (*distance*.npy or .meanmedian) already exist inside model_output_dir.
+    """
+    model_output_abs = os.path.abspath(model_output_dir)
+    distance_npy_files = find_distance_npy_files(model_output_abs)
     meanmedian_files = glob.glob(os.path.join(model_output_abs, "**", "*.meanmedian"), recursive=True)
-    return len(npy_files) > 0 or len(meanmedian_files) > 0
+    return len(distance_npy_files) > 0 or len(meanmedian_files) > 0
 
 
 def extract_metrics(model_output_dir: str) -> Tuple[float, float]:
@@ -184,18 +194,14 @@ def extract_metrics(model_output_dir: str) -> Tuple[float, float]:
     import numpy as np
 
     model_output_abs = os.path.abspath(model_output_dir)
-    npy_files = glob.glob(os.path.join(model_output_abs, "**", "*.npy"), recursive=True)
+    distance_npy_files = find_distance_npy_files(model_output_abs)
 
-    if not npy_files:
-        raise FileNotFoundError(f"No .npy evaluation metric files found in {model_output_abs}")
+    if not distance_npy_files:
+        raise FileNotFoundError(
+            f"No evaluation metric (*distance*.npy) files found in {model_output_abs}"
+        )
 
-    distances_file = None
-    for f in npy_files:
-        if "distance" in os.path.basename(f).lower():
-            distances_file = f
-            break
-    if distances_file is None:
-        distances_file = npy_files[0]
+    distances_file = distance_npy_files[0]
 
     print(f"[INFO] Reading evaluation metrics from: {distances_file}")
     data = np.load(distances_file, allow_pickle=True)

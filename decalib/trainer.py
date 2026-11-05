@@ -398,12 +398,18 @@ class Trainer(object):
     def fit(self):
         self.prepare_data()
 
-        iters_every_epoch = int(len(self.train_dataset)/self.batch_size)
-        start_epoch = self.global_step//iters_every_epoch
+        grad_accum_steps = max(1, self.cfg.dataset.gradient_accumulation_steps)
+        iters_every_epoch = int(len(self.train_dataset) / self.batch_size)
+        start_total_iter = self.global_step * grad_accum_steps
+        start_epoch = start_total_iter // iters_every_epoch
+
+        self.opt.zero_grad()
+
         for epoch in range(start_epoch, self.cfg.train.max_epochs):
             # for step, batch in enumerate(tqdm(self.train_dataloader, desc=f"Epoch: {epoch}/{self.cfg.train.max_epochs}")):
             for step in tqdm(range(iters_every_epoch), desc=f"Epoch[{epoch+1}/{self.cfg.train.max_epochs}]"):
-                if epoch*iters_every_epoch + step < self.global_step:
+                total_iter = epoch * iters_every_epoch + step
+                if total_iter < start_total_iter:
                     continue
                 try:
                     batch = next(self.train_iter)
@@ -412,20 +418,14 @@ class Trainer(object):
                     batch = next(self.train_iter)
                 losses, opdict = self.training_step(batch, step)
                 all_loss = losses['all_loss']
-                grad_accum_steps = self.cfg.dataset.gradient_accumulation_steps
+
+                scaled_loss = all_loss / grad_accum_steps
+                scaled_loss.backward()
+
                 step_updated = False
-                if grad_accum_steps > 1:
-                    scaled_loss = all_loss / grad_accum_steps
-                    scaled_loss.backward()
-                    if (step + 1) % grad_accum_steps == 0:
-                        self.opt.step()
-                        self.opt.zero_grad()
-                        self.global_step += 1
-                        step_updated = True
-                else:
-                    self.opt.zero_grad()
-                    all_loss.backward()
+                if (total_iter + 1) % grad_accum_steps == 0:
                     self.opt.step()
+                    self.opt.zero_grad()
                     self.global_step += 1
                     step_updated = True
 
