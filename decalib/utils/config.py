@@ -9,7 +9,7 @@ import os
 cfg = CN()
 
 abs_deca_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-cfg.deca_dir = abs_deca_dir
+cfg.deca_dir = '/content/drive/MyDrive/DECAdatasets/'
 cfg.device = 'cuda'
 cfg.device_id = '0'
 
